@@ -9,7 +9,7 @@ from functools import partial
 
 class RedistributeTransform(BasicTransform):
     '''
-    Redistribute image values using segmentation 
+    Redistribute image values using segmentation regions.
 
     Based on https://github.com/neuropoly/totalspineseg/blob/main/totalspineseg/utils/augment.py
     '''
