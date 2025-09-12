@@ -1,4 +1,6 @@
 {
+  "retain_stats": true,
+  "mirror_axes": [0,1,2],
   "ArtifactTransform": {
     "motion": false,
     "ghosting": false,
