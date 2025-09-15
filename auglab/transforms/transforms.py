@@ -206,3 +206,4 @@ def get_train_transforms(
                 bg_style_seg_sampling=False#, mode_seg='nearest'
             )
         '''
+        return transforms
