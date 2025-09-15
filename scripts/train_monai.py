@@ -1,3 +1,7 @@
+'''
+This script trains a segmentation network using MONAI with augmentations done on the fly during training.
+'''
+
 import os
 import numpy as np
 import argparse
@@ -27,10 +31,6 @@ from monai.transforms import (
 )
 
 # Import AugLab custom transforms
-from auglab.transforms.artifact import ArtifactTransform
-from auglab.transforms.contrast import ConvTransform, HistogramEqualTransform, FunctionTransform
-from auglab.transforms.fromSeg import RedistributeTransform
-from auglab.transforms.spatial import SpatialCustomTransform, ShapeTransform
 from auglab.utils.utils import fetch_image_config, parser2config, tuple_type_float, tuple_type_int, adjust_learning_rate, tuple2string, compute_dsc, get_validation_image
 import auglab.configs as configs
 from auglab.transforms.transforms import get_train_transforms
@@ -114,7 +114,7 @@ def main():
         [
             LoadImaged(keys=["image", "label"]),
             EnsureChannelFirstd(keys=["image", "label"]),
-            Orientationd(keys=["image", "label"], axcodes="LIA"),
+            Orientationd(keys=["image", "label"], axcodes="LAS"),
             Spacingd(
                 keys=["image", "label"],
                 pixdim=pixdim,
@@ -130,7 +130,7 @@ def main():
         [
             LoadImaged(keys=["image", "label"]),
             EnsureChannelFirstd(keys=["image", "label"]),
-            Orientationd(keys=["image", "label"], axcodes="LIA"),
+            Orientationd(keys=["image", "label"], axcodes="LAS"),
             Spacingd(
                 keys=["image", "label"],
                 pixdim=pixdim,
