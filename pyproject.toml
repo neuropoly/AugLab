@@ -28,7 +28,10 @@ keywords = [
 ]
 dependencies = [
     "batchgeneratorsv2",
-    "torchio"
+    "torchio",
+    "monai[all]",
+    "progress",
+    "numpy"
 ]
 
 [project.urls]
