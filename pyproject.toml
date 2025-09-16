@@ -6,7 +6,7 @@ description = "AugLab investigates the influence of different data augmentation 
 readme = "README.md"
 authors = [
     { name = "Nathan Molinier", email = "nathan.molinier@polymtl.ca"},
-    { name = "Hendrik Möller", email = ""},
+    { name = "Hendrik Möller"},
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
