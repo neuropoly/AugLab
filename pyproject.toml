@@ -31,7 +31,8 @@ dependencies = [
     "torchio",
     "monai[all]",
     "progress",
-    "numpy"
+    "numpy",
+    "tqdm"
 ]
 
 [project.urls]
