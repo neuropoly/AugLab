@@ -23,7 +23,7 @@ def fetch_image_config(config_data, split='TRAINING'):
     dict_list = config_data[split]
     
     # Init progression bar
-    bar = Bar(f'Load {split} data with pre-processing', max=len(dict_list))
+    bar = Bar(f'Load {split} data', max=len(dict_list))
     
     err = []
     out_list = []
