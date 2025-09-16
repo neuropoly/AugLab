@@ -179,3 +179,7 @@ cython_debug/
 *.csv
 *.nii.gz
 *.nii
+
+# Folders
+weights/
+wandb/
