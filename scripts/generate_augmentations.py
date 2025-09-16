@@ -5,17 +5,14 @@ from functools import partial
 from tqdm.contrib.concurrent import process_map
 from pathlib import Path
 import numpy as np
+import torch
 import warnings
 
-from monai.transforms import (
-    EnsureChannelFirstd,
-    Compose,
-    NormalizeIntensityd,
-)
+from batchgeneratorsv2.transforms.utils.compose import ComposeTransforms
 
 from auglab.utils.utils import fetch_image_config
 from auglab.transforms.transforms import get_train_transforms
-from auglab.utils.image import Image, resample_nib
+from auglab.utils.image import Image, resample_nib, zeros_like
 
 warnings.filterwarnings("ignore")
 
@@ -108,8 +105,13 @@ def augment_mp(
     '''
     Wrapper function to handle multiprocessing.
     '''
+    # Convert to Path object
+    data_json_path = Path(data_json_path)
+    transforms_json_path = Path(transforms_json_path)
+    ofolder = Path(ofolder)
+
     # Load data config
-    with open(data_json_path, "r") as f:
+    with open(str(data_json_path), "r") as f:
         data_config = json.load(f)
     
     data_list, _ = fetch_image_config(
@@ -119,23 +121,15 @@ def augment_mp(
 
     # Init transforms
     if not transforms_json_path.is_file():
-        print(f'Error: {transforms_json_path}, Transforms config file not found')
+        print(f'Error: {str(transforms_json_path)}, Transforms config file not found')
         return
-    
-    train_transforms = Compose(
-        [
-            EnsureChannelFirstd(keys=["image", "label"]),
-            NormalizeIntensityd(keys=["image"], nonzero=False, channel_wise=False),
-            # Insert AugLab transforms here
-        ] + get_train_transforms(json_path=str(transforms_json_path))
-    )
 
     process_map(
         partial(
             augment,
             augmentations_per_image=augmentations_per_image,
             ofolder=ofolder,
-            train_transforms=train_transforms,
+            train_transforms_path=transforms_json_path,
             overwrite=overwrite,
         ),
         data_list,
@@ -147,13 +141,17 @@ def augment_mp(
 def augment(
         data_dict,
         augmentations_per_image,
-        train_transforms,
+        train_transforms_path,
         ofolder,
         overwrite=False,
     ):
     '''
     Augmentation function.
     '''
+    # Load transforms
+    train_transforms = ComposeTransforms(get_train_transforms(json_path=str(train_transforms_path)))
+
+    # Create PATH objects
     img_path = Path(data_dict['image'])
     seg_path = Path(data_dict['label'])
 
@@ -166,36 +164,48 @@ def augment(
     img = resample_nib(img, new_size=[pr, pr, pr], new_size_type='mm', interpolation='spline', verbose=False)
     seg = resample_nib(seg, new_size=[pr, pr, pr], new_size_type='mm', interpolation='nn', verbose=False)
 
+    # Normalize image using mean and std
+    img.data = (img.data - img.data.mean()) / img.data.std()
+
+    # Create torch tensors and unsqueeze channel dimension
+    img_tensor = torch.from_numpy(img.data.copy()).unsqueeze(0).to(torch.float32)
+    seg_tensor = torch.from_numpy(seg.data.copy()).unsqueeze(0)
+
     # Create augmentations
     for i in range(augmentations_per_image):
         # Create output path
-        output_image_path = Path(ofolder) / f"{img_path.name}_a{i+1}"
-        output_seg_path = Path(ofolder) / f"{seg_path.name}_a{i+1}"
+        output_image_path = Path(ofolder) / "img" / f"{img_path.name.replace('.nii.gz', '')}_a{i+1}.nii.gz"
+        output_seg_path = Path(ofolder) / "seg" / f"{seg_path.name.replace('.nii.gz', '')}_a{i+1}.nii.gz"
 
         # Generate augmentation
         if not overwrite and (output_image_path.exists() or output_seg_path.exists()):
             continue
         
         # Transform data
-        tensor_dict = train_transforms({'image': img.data, 'label': seg.data})
+        tensor_dict = train_transforms(**{'image': img_tensor.detach().clone(), 'segmentation': seg_tensor.detach().clone()})
+        
+        img_out = zeros_like(img)
+        img_out.data = tensor_dict['image'].squeeze(0).numpy()
+        seg_out = zeros_like(seg)
+        seg_out.data = tensor_dict['segmentation'].squeeze(0).numpy()
 
+        # Save augmented data
+        if not output_image_path.parent.exists():
+            output_image_path.parent.mkdir(parents=True, exist_ok=True)
+        if not output_seg_path.parent.exists():
+            output_seg_path.parent.mkdir(parents=True, exist_ok=True)
+        img_out.save(output_image_path)
+        seg_out.save(output_seg_path)
 
 if __name__ == '__main__':
-    #main()
-    transforms_json_path = Path('auglab/configs/transform_params.json')
-    augment(
-        data_dict={
-            'image': '/home/GRAMES.POLYMTL.CA/p118739/data_nvme_p118739/datasets/Task01_BrainTumour/imagesTr/brats_001.nii.gz',
-            'label': '/home/GRAMES.POLYMTL.CA/p118739/data_nvme_p118739/datasets/Task01_BrainTumour/labelsTr/brats_001.nii.gz',
-        },
-        augmentations_per_image=2,
-        train_transforms=Compose(
-            [
-                EnsureChannelFirstd(keys=["image", "label"]),
-                NormalizeIntensityd(keys=["image"], nonzero=False, channel_wise=False),
-                # Insert AugLab transforms here
-            ] + get_train_transforms(json_path=str(transforms_json_path))
-        ),
-        ofolder='/home/GRAMES.POLYMTL.CA/p118739/data_nvme_p118739/data/datasets/test-auglab/augmented',
-        overwrite=True,
-    )
+
+    main()
+    # augment_mp(
+    #     data_json_path="auglab/configs/data/data.json",
+    #     transforms_json_path="auglab/configs/transform_params.json",
+    #     ofolder="/home/GRAMES.POLYMTL.CA/p118739/data_nvme_p118739/data/datasets/test-auglab/augmented",
+    #     augmentations_per_image=2,
+    #     overwrite=True,
+    #     max_workers=mp.cpu_count(),
+    #     quiet=False,
+    # )
