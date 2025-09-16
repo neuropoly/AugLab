@@ -33,7 +33,7 @@ def fetch_image_config(config_data, split='TRAINING'):
         if not os.path.exists(input_img_path):
             err.append([input_img_path, 'path error'])
         else:
-            out_list.append({'image':os.path.abspath(input_img_path), 'label':os.path.abspath(input_seg_path)})
+            out_list.append({'image':os.path.abspath(input_img_path), 'segmentation':os.path.abspath(input_seg_path)})
 
         # Plot progress
         bar.suffix  = f'{dict_list.index(di)+1}/{len(dict_list)}'

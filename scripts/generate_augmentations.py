@@ -8,10 +8,8 @@ import numpy as np
 import torch
 import warnings
 
-from batchgeneratorsv2.transforms.utils.compose import ComposeTransforms
-
 from auglab.utils.utils import fetch_image_config
-from auglab.transforms.transforms import get_train_transforms
+from auglab.transforms.transforms import AugTransforms
 from auglab.utils.image import Image, resample_nib, zeros_like
 
 warnings.filterwarnings("ignore")
@@ -149,11 +147,11 @@ def augment(
     Augmentation function.
     '''
     # Load transforms
-    train_transforms = ComposeTransforms(get_train_transforms(json_path=str(train_transforms_path)))
+    train_transforms = AugTransforms(json_path=str(train_transforms_path))
 
     # Create PATH objects
     img_path = Path(data_dict['image'])
-    seg_path = Path(data_dict['label'])
+    seg_path = Path(data_dict['segmentation'])
 
     # Load images
     img = Image(str(img_path)).change_orientation('RPI') # RPI- == LAS+
@@ -182,8 +180,8 @@ def augment(
             continue
         
         # Transform data
-        tensor_dict = train_transforms(**{'image': img_tensor.detach().clone(), 'segmentation': seg_tensor.detach().clone()})
-        
+        tensor_dict = train_transforms({'image': img_tensor.detach().clone(), 'segmentation': seg_tensor.detach().clone()})
+                
         img_out = zeros_like(img)
         img_out.data = tensor_dict['image'].squeeze(0).numpy()
         seg_out = zeros_like(seg)

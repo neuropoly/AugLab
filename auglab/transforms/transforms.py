@@ -12,34 +12,33 @@ from batchgeneratorsv2.transforms.spatial.low_resolution import SimulateLowResol
 from batchgeneratorsv2.transforms.spatial.mirroring import MirrorTransform
 from batchgeneratorsv2.transforms.spatial.spatial import SpatialTransform
 from batchgeneratorsv2.transforms.utils.random import RandomTransform
+from batchgeneratorsv2.transforms.utils.compose import ComposeTransforms
 
 from auglab.transforms.artifact import ArtifactTransform
 from auglab.transforms.contrast import ConvTransform, HistogramEqualTransform, FunctionTransform
 from auglab.transforms.fromSeg import RedistributeTransform
 from auglab.transforms.spatial import SpatialCustomTransform, ShapeTransform
 
-def get_train_transforms(
-        json_path: str,
-):
+class AugTransforms:
+    def __init__(self, json_path: str):
         # Load transform parameters from JSON
         config_path = os.path.join(json_path)
         with open(config_path, 'r') as f:
-            transform_params = json.load(f)
-        
-        # Setup training transforms
+            self.transform_params = json.load(f)
+        self.transforms = self._build_transforms()
+
+    def _build_transforms(self):
+        transform_params = self.transform_params
         transforms = []
 
-        ## Image transforms
         # Scharr filter
         conv_params = transform_params.get('ConvTransform', {})
         conv_prob = conv_params.pop('probability', 0.15)
-        conv_params['retain_stats'] = transform_params.get('retain_stats', False)  # allow override if needed
+        conv_params['retain_stats'] = transform_params.get('retain_stats', False)
         transforms.append(RandomTransform(
-            ConvTransform(
-                **conv_params
-            ), apply_probability=conv_prob
+            ConvTransform(**conv_params), apply_probability=conv_prob
         ))
-        
+
         # Gaussian blur
         blur_params = transform_params.get('GaussianBlurTransform', {})
         blur_prob = blur_params.pop('probability', 0.2)
@@ -93,7 +92,7 @@ def get_train_transforms(
         transforms.append(RandomTransform(
             GammaTransform(
                 gamma=BGContrast(tuple(gamma_inv_params.get('gamma', (0.7, 1.5)))),
-                p_invert_image=gamma_inv_params.get('p_invert_image', 1), # With inversion
+                p_invert_image=gamma_inv_params.get('p_invert_image', 1),
                 synchronize_channels=gamma_inv_params.get('synchronize_channels', False),
                 p_per_channel=gamma_inv_params.get('p_per_channel', 1),
                 p_retain_stats=gamma_inv_params.get('p_retain_stats', 1)
@@ -105,7 +104,7 @@ def get_train_transforms(
         transforms.append(RandomTransform(
             GammaTransform(
                 gamma=BGContrast(tuple(gamma_params.get('gamma', (0.7, 1.5)))),
-                p_invert_image=gamma_params.get('p_invert_image', 0), # Without inversion
+                p_invert_image=gamma_params.get('p_invert_image', 0),
                 synchronize_channels=gamma_params.get('synchronize_channels', False),
                 p_per_channel=gamma_params.get('p_per_channel', 1),
                 p_retain_stats=gamma_params.get('p_retain_stats', 1)
@@ -114,13 +113,12 @@ def get_train_transforms(
 
         # Apply functions
         func_list = [
-            lambda x: torch.log(1 + x), # Log
-            torch.sqrt, # sqrt
-            torch.sin, # sin
-            torch.exp, # exp
-            lambda x: 1/(1 + torch.exp(-x)), # sig
+            lambda x: torch.log(1 + x),
+            torch.sqrt,
+            torch.sin,
+            torch.exp,
+            lambda x: 1/(1 + torch.exp(-x)),
         ]
-
         func_prob = transform_params.get('FunctionTransform', {}).get('probability', 0.05)
         for func in func_list:
             transforms.append(RandomTransform(
@@ -148,8 +146,7 @@ def get_train_transforms(
             ), apply_probability=redist_prob
         ))
 
-        ## Resolution transforms
-        # Simulate reduced shape
+        # Resolution transforms
         shape_params = transform_params.get('ShapeTransform', {})
         shape_prob = shape_params.pop('probability', 0.4)
         transforms.append(RandomTransform(
@@ -180,7 +177,7 @@ def get_train_transforms(
                 )
             )
 
-        ## Artifacts generation
+        # Artifacts generation
         artifact_params = transform_params.get('ArtifactTransform', {})
         artifact_prob = artifact_params.pop('probability', 0.7)
         transforms.append(RandomTransform(
@@ -189,7 +186,7 @@ def get_train_transforms(
             ), apply_probability=artifact_prob
         ))
 
-        ## Spatial transforms
+        # Spatial transforms
         spatial_params = transform_params.get('SpatialCustomTransform', {})
         spatial_prob = spatial_params.pop('probability', 0.6)
         transforms.append(RandomTransform(
@@ -197,13 +194,9 @@ def get_train_transforms(
                 **spatial_params
             ), apply_probability=spatial_prob
         ))
-        '''
-        # Use nnunet transform instead?
-        SpatialTransform(
-                patch_size_spatial, patch_center_dist_from_border=0, random_crop=False, p_elastic_deform=0,
-                p_rotation=0.2,
-                rotation=rotation_for_DA, p_scaling=0.2, scaling=(0.7, 1.4), p_synchronize_scaling_across_axes=1,
-                bg_style_seg_sampling=False#, mode_seg='nearest'
-            )
-        '''
-        return transforms
+
+        return ComposeTransforms(transforms)
+
+    def __call__(self, data):
+        new_data = self.transforms(**data)
+        return new_data

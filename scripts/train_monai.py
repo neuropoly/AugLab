@@ -33,7 +33,7 @@ from monai.transforms import (
 # Import AugLab custom transforms
 from auglab.utils.utils import fetch_image_config, parser2config, tuple_type_float, tuple_type_int, adjust_learning_rate, tuple2string, compute_dsc, get_validation_image
 import auglab.configs as configs
-from auglab.transforms.transforms import get_train_transforms
+from auglab.transforms.transforms import AugTransforms
 
 def get_parser():
     # parse command line arguments
@@ -48,7 +48,7 @@ def get_parser():
     parser.add_argument('--channels', type=tuple_type_int, default=(32, 64, 128, 256), help='Channels if attunet selected (default=16,32,64,128,256)')
     parser.add_argument('--patch-size', type=tuple_type_int, default=(96, 96, 96), help='Training patch size (default=(96, 96, 96)).')
     parser.add_argument('--pixdim', type=tuple_type_float, default=(1, 1, 1), help='Training resolution in RSP orientation (default=(1, 1, 1)).')
-    parser.add_argument('--lr', default=1e-5, type=float, metavar='LR', help='Initial learning rate (default=1e-5)')
+    parser.add_argument('--lr', default=1e-4, type=float, metavar='LR', help='Initial learning rate (default=1e-4)')
     parser.add_argument('--weight-folder', type=str, default=os.path.abspath('weights/'), help='Folder where the weights will be stored and loaded. Will be created if does not exist. (default="src/ply/weights/3DGAN")')
     parser.add_argument('--start-weights', type=str, default='', help='Path to the model weights used to start the training.')
     return parser
@@ -112,33 +112,34 @@ def main():
     patch_size = args.patch_size
     train_transforms = Compose(
         [
-            LoadImaged(keys=["image", "label"]),
-            EnsureChannelFirstd(keys=["image", "label"]),
-            Orientationd(keys=["image", "label"], axcodes="LAS"),
+            LoadImaged(keys=["image", "segmentation"]),
+            EnsureChannelFirstd(keys=["image", "segmentation"]),
+            Orientationd(keys=["image", "segmentation"], axcodes="LAS"),
             Spacingd(
-                keys=["image", "label"],
+                keys=["image", "segmentation"],
                 pixdim=pixdim,
                 mode=(2, 'nearest'), # 2 for spline interpolation
             ),
             NormalizeIntensityd(keys=["image"], nonzero=False, channel_wise=False),
-            RandCropByPosNegLabeld(keys=["image", "label"], label_key="label", spatial_size=patch_size, pos=3, neg=1, num_samples=3, allow_smaller=True),
-            ResizeWithPadOrCropd(keys=["image", "label"], spatial_size=patch_size),
+            RandCropByPosNegLabeld(keys=["image", "segmentation"], label_key="segmentation", spatial_size=patch_size, pos=3, neg=1, num_samples=3, allow_smaller=True),
             # Insert AugLab transforms here
-        ] + get_train_transforms(json_path=str(json_path))
+            AugTransforms(json_path=str(json_path)),
+            ResizeWithPadOrCropd(keys=["image", "segmentation"], spatial_size=patch_size)
+        ]
     )
     val_transforms = Compose(
         [
-            LoadImaged(keys=["image", "label"]),
-            EnsureChannelFirstd(keys=["image", "label"]),
-            Orientationd(keys=["image", "label"], axcodes="LAS"),
+            LoadImaged(keys=["image", "segmentation"]),
+            EnsureChannelFirstd(keys=["image", "segmentation"]),
+            Orientationd(keys=["image", "segmentation"], axcodes="LAS"),
             Spacingd(
-                keys=["image", "label"],
+                keys=["image", "segmentation"],
                 pixdim=pixdim,
                 mode=(2, 'nearest'),
             ),
             NormalizeIntensityd(keys=["image"], nonzero=False, channel_wise=False),
-            RandCropByPosNegLabeld(keys=["image", "label"], label_key="label", spatial_size=patch_size, pos=3, neg=1, num_samples=3, allow_smaller=True),
-            ResizeWithPadOrCropd(keys=["image", "label"], spatial_size=patch_size),
+            RandCropByPosNegLabeld(keys=["image", "segmentation"], label_key="segmentation", spatial_size=patch_size, pos=3, neg=1, num_samples=3, allow_smaller=True),
+            ResizeWithPadOrCropd(keys=["image", "segmentation"], spatial_size=patch_size),
         ]
     )
 
@@ -278,14 +279,14 @@ def validate(data_loader, model, loss_func, epoch, device):
     with torch.no_grad():
         for step, batch in enumerate(epoch_iterator):
             # Load input and target
-            x, y = (batch["image"].to(device), batch["label"].to(device))
+            x, y = (batch["image"].to(device), batch["segmentation"].to(device))
 
             # Get output from model
             if  x.isnan().any():
-                print ('found a nan in data.')
+                print('found a nan in data.')
             y_pred = model(x)
             if  y_pred.isnan().any():
-                print ('found a nan in output.')
+                print('found a nan in output.')
 
             # Compute loss for each element in the batch size
             loss = loss_func(y_pred, y)
@@ -317,9 +318,8 @@ def train(data_loader, model, loss_func, optimizer, scaler, device):
     epoch_iterator = tqdm(data_loader, desc="Training (loss=X.X) (DSC=X.X)", dynamic_ncols=True)
     for step, batch in enumerate(epoch_iterator):
         # Load input and target
-        x, y = batch["image"].to(device), batch["label"].to(device)
+        x, y = batch["image"].to(device), batch["segmentation"].to(device)
         
-        # qc_side_by_side(image_name=os.path.basename(x.meta['filename_or_obj'][0]), images=[x.data.cpu().numpy()[0,0],y.data.cpu().numpy()[0,0],y.data.cpu().numpy()[0,1]], qc_path='./qc')
         with torch.amp.autocast('cuda'):
             # Get output from model
             y_pred = model(x)
