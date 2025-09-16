@@ -8,7 +8,7 @@ This repository contains:
 - A basic Monai segmentation [script](https://github.com/neuropoly/AugLab/blob/bed6c1b5cf8ec3dbe6165daca507bf431cad65e5/scripts/train_monai.py) incorporating data augmentations
 - A [script](https://github.com/neuropoly/AugLab/blob/bed6c1b5cf8ec3dbe6165daca507bf431cad65e5/scripts/generate_augmentations.py) generating augmentations from input images and segmentations
 
-## How to use ?
+## How to install ?
 
 1. Open a `bash` terminal in the directory where you want to work.
 
@@ -38,4 +38,12 @@ This repository contains:
 ```bash
 python3 -m pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu118 --upgrade
 ```
+
+## How to use my data ?
+
+Scripts developped in this repository use JSON files to specify image and segmentation paths: see this [example](https://github.com/neuropoly/AugLab/blob/16653a84e031c40e25a72e946c2724494606b21c/auglab/configs/data/data.json).
+
+## How do I specify my parameters ?
+
+To track parameters used during data augmentation, JSON files are also used: see this [example](https://github.com/neuropoly/AugLab/blob/16653a84e031c40e25a72e946c2724494606b21c/auglab/configs/transform_params.json)
 
