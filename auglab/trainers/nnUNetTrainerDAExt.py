@@ -22,7 +22,7 @@ import torch
 import importlib
 
 import auglab.configs as configs
-from auglab.transforms.transforms import get_train_transforms
+from auglab.transforms.transforms import AugTransforms
 
 class nnUNetTrainerDAExt(nnUNetTrainer):
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
@@ -123,7 +123,7 @@ class nnUNetTrainerDAExt(nnUNetTrainer):
         ### Adds transforms
         configs_path = importlib.resources.files(configs)
         json_path = configs_path / "transform_params.json"
-        transforms += get_train_transforms(json_path=str(json_path))
+        transforms.append(AugTransforms(json_path=str(json_path)))
 
         ## Removed do_dummy_2d_data_aug
         
