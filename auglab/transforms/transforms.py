@@ -198,5 +198,4 @@ class AugTransforms:
         return ComposeTransforms(transforms)
 
     def __call__(self, data):
-        new_data = self.transforms(**data)
-        return new_data
+        return self.transforms(**data)
