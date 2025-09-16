@@ -1,30 +1,21 @@
-import sys, argparse, textwrap
+import argparse, textwrap
 import json
 import multiprocessing as mp
 from functools import partial
 from tqdm.contrib.concurrent import process_map
 from pathlib import Path
-import nibabel as nib
 import numpy as np
-import torchio as tio
-import gryds
-import scipy.ndimage as ndi
-from scipy.stats import norm
 import warnings
 
 from monai.transforms import (
-    LoadImaged,
-    Orientationd,
     EnsureChannelFirstd,
-    Spacingd,
     Compose,
-    RandCropByPosNegLabeld,
-    ResizeWithPadOrCropd,
     NormalizeIntensityd,
 )
 
-from auglab.utils.utils import fetch_image_config, tuple_type_float, tuple_type_int
+from auglab.utils.utils import fetch_image_config
 from auglab.transforms.transforms import get_train_transforms
+from auglab.utils.image import Image, resample_nib
 
 warnings.filterwarnings("ignore")
 
@@ -58,14 +49,6 @@ def main():
         help='Number of augmentation images to generate. Default is 5.'
     )
     parser.add_argument(
-        '--patch-size', type=tuple_type_int, default=(96, 96, 96), 
-        help='Training patch size (default=(96, 96, 96)).'
-    )
-    parser.add_argument(
-        '--pixdim', type=tuple_type_float, default=(1, 1, 1), 
-        help='Training resolution in LAS orientation (default=(1, 1, 1)).'
-    )
-    parser.add_argument(
         '--overwrite', '-r', action="store_true", default=False,
         help='If provided, overwrite existing output files, defaults to false (Do not overwrite).'
     )
@@ -85,8 +68,6 @@ def main():
     data_json_path = args.data
     transforms_json_path = args.transforms
     ofolder = args.ofolder
-    patch_size = args.patch_size
-    pixdim = args.pixdim
     augmentations_per_image = args.augmentations_per_image
     overwrite = args.overwrite
     max_workers = args.max_workers
@@ -99,8 +80,6 @@ def main():
             data_json_path = {data_json_path}
             transforms_json_path = {transforms_json_path}
             ofolder = {ofolder}
-            patch_size = {patch_size}
-            pixdim = {pixdim}
             augmentations_per_image = {augmentations_per_image}
             overwrite = {overwrite}
             max_workers = {max_workers}
@@ -111,8 +90,6 @@ def main():
         data_json_path=data_json_path,
         transforms_json_path=transforms_json_path,
         ofolder=ofolder,
-        patch_size=patch_size,
-        pixdim=pixdim,
         augmentations_per_image=augmentations_per_image,
         overwrite=overwrite,
         max_workers=max_workers,
@@ -123,8 +100,6 @@ def augment_mp(
         data_json_path,
         transforms_json_path,
         ofolder,
-        patch_size=(64, 64, 64),
-        pixdim=(1.0, 1.0, 1.0),
         augmentations_per_image=5,
         overwrite=False,
         max_workers=mp.cpu_count(),
@@ -149,17 +124,8 @@ def augment_mp(
     
     train_transforms = Compose(
         [
-            LoadImaged(keys=["image", "label"]),
             EnsureChannelFirstd(keys=["image", "label"]),
-            Orientationd(keys=["image", "label"], axcodes="LAS"),
-            Spacingd(
-                keys=["image", "label"],
-                pixdim=pixdim,
-                mode=(2, 'nearest'), # 2 for spline interpolation
-            ),
             NormalizeIntensityd(keys=["image"], nonzero=False, channel_wise=False),
-            RandCropByPosNegLabeld(keys=["image", "label"], label_key="label", spatial_size=patch_size, pos=3, neg=1, num_samples=3, allow_smaller=True),
-            ResizeWithPadOrCropd(keys=["image", "label"], spatial_size=patch_size),
             # Insert AugLab transforms here
         ] + get_train_transforms(json_path=str(transforms_json_path))
     )
@@ -188,21 +154,48 @@ def augment(
     '''
     Augmentation function.
     '''
-    image_path = Path(data_dict['image'])
+    img_path = Path(data_dict['image'])
     seg_path = Path(data_dict['label'])
+
+    # Load images
+    img = Image(str(img_path)).change_orientation('RPI') # RPI- == LAS+
+    seg = Image(str(seg_path)).change_orientation('RPI')
+
+    # Resample to 1mm isotropic
+    pr = 1.0
+    img = resample_nib(img, new_size=[pr, pr, pr], new_size_type='mm', interpolation='spline', verbose=False)
+    seg = resample_nib(seg, new_size=[pr, pr, pr], new_size_type='mm', interpolation='nn', verbose=False)
 
     # Create augmentations
     for i in range(augmentations_per_image):
         # Create output path
-        output_image_path = Path(ofolder) / f"{image_path.name}_a{i+1}"
+        output_image_path = Path(ofolder) / f"{img_path.name}_a{i+1}"
         output_seg_path = Path(ofolder) / f"{seg_path.name}_a{i+1}"
 
         # Generate augmentation
         if not overwrite and (output_image_path.exists() or output_seg_path.exists()):
             continue
-
-        tensor_dict = train_transforms({'image': str(image_path), 'label': str(seg_path)})
+        
+        # Transform data
+        tensor_dict = train_transforms({'image': img.data, 'label': seg.data})
 
 
 if __name__ == '__main__':
-    main()
+    #main()
+    transforms_json_path = Path('auglab/configs/transform_params.json')
+    augment(
+        data_dict={
+            'image': '/home/GRAMES.POLYMTL.CA/p118739/data_nvme_p118739/datasets/Task01_BrainTumour/imagesTr/brats_001.nii.gz',
+            'label': '/home/GRAMES.POLYMTL.CA/p118739/data_nvme_p118739/datasets/Task01_BrainTumour/labelsTr/brats_001.nii.gz',
+        },
+        augmentations_per_image=2,
+        train_transforms=Compose(
+            [
+                EnsureChannelFirstd(keys=["image", "label"]),
+                NormalizeIntensityd(keys=["image"], nonzero=False, channel_wise=False),
+                # Insert AugLab transforms here
+            ] + get_train_transforms(json_path=str(transforms_json_path))
+        ),
+        ofolder='/home/GRAMES.POLYMTL.CA/p118739/data_nvme_p118739/data/datasets/test-auglab/augmented',
+        overwrite=True,
+    )
