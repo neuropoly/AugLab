@@ -16,8 +16,8 @@ def fetch_image_config(config_data, split='TRAINING'):
         ]
     '''
     # Check config type to ensure that labels paths are specified and not images
-    if config_data['TYPE'] != 'IMAGE':
-        raise ValueError('TYPE error: Type IMAGE not detected')
+    if config_data['TYPE'] != 'LABEL':
+        raise ValueError('TYPE error: Type LABEL not detected')
     
     # Get file paths based on split
     dict_list = config_data[split]
@@ -29,11 +29,12 @@ def fetch_image_config(config_data, split='TRAINING'):
     out_list = []
     for di in dict_list:
         input_img_path = os.path.join(config_data['DATASETS_PATH'], di['IMAGE'])
+        input_seg_path = os.path.join(config_data['DATASETS_PATH'], di['LABEL'])
         if not os.path.exists(input_img_path):
             err.append([input_img_path, 'path error'])
         else:
-            out_list.append({'image':os.path.abspath(input_img_path), 'label':os.path.abspath(input_img_path)})
-        
+            out_list.append({'image':os.path.abspath(input_img_path), 'label':os.path.abspath(input_seg_path)})
+
         # Plot progress
         bar.suffix  = f'{dict_list.index(di)+1}/{len(dict_list)}'
         bar.next()
