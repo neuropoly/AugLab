@@ -2,6 +2,9 @@ from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
 from nnunetv2.training.dataloading.data_loader import nnUNetDataLoader
 from nnunetv2.utilities.default_n_proc_DA import get_allowed_n_proc_DA
 from nnunetv2.training.dataloading.nnunet_dataset import infer_dataset_class
+from nnunetv2.utilities.label_handling.label_handling import determine_num_input_channels
+from torch.nn.parallel import DistributedDataParallel as DDP
+
 from batchgenerators.dataloading.single_threaded_augmenter import SingleThreadedAugmenter
 from batchgenerators.dataloading.nondet_multi_threaded_augmenter import NonDetMultiThreadedAugmenter
 from typing import Tuple, Union, List
@@ -217,3 +220,45 @@ class nnUNetTrainerDAExt(nnUNetTrainer):
         if deep_supervision_scales is not None:
             transforms.append(DownsampleSegForDSTransform(ds_scales=deep_supervision_scales))
         return ComposeTransforms(transforms)
+
+class nnUNetTrainerDAExtGPU(nnUNetTrainer):
+    def initialize(self):
+        if not self.was_initialized:
+            ## DDP batch size and oversampling can differ between workers and needs adaptation
+            # we need to change the batch size in DDP because we don't use any of those distributed samplers
+            self._set_batch_size_and_oversample()
+
+            self.num_input_channels = determine_num_input_channels(self.plans_manager, self.configuration_manager,
+                                                                   self.dataset_json)
+
+            self.network = self.build_network_architecture(
+                self.configuration_manager.network_arch_class_name,
+                self.configuration_manager.network_arch_init_kwargs,
+                self.configuration_manager.network_arch_init_kwargs_req_import,
+                self.num_input_channels,
+                self.label_manager.num_segmentation_heads,
+                self.enable_deep_supervision
+            ).to(self.device)
+            # compile network for free speedup
+            if self._do_i_compile():
+                self.print_to_log_file('Using torch.compile...')
+                self.network = torch.compile(self.network)
+
+            self.optimizer, self.lr_scheduler = self.configure_optimizers()
+            # if ddp, wrap in DDP wrapper
+            if self.is_ddp:
+                self.network = torch.nn.SyncBatchNorm.convert_sync_batchnorm(self.network)
+                self.network = DDP(self.network, device_ids=[self.local_rank])
+
+            self.loss = self._build_loss()
+
+            self.dataset_class = infer_dataset_class(self.preprocessed_dataset_folder)
+
+            # torch 2.2.2 crashes upon compiling CE loss
+            # if self._do_i_compile():
+            #     self.loss = torch.compile(self.loss)
+            self.was_initialized = True
+        else:
+            raise RuntimeError("You have called self.initialize even though the trainer was already initialized. "
+                               "That should not happen.")
+
