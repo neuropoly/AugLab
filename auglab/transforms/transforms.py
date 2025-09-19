@@ -199,3 +199,27 @@ class AugTransforms:
 
     def __call__(self, data):
         return self.transforms(**data)
+
+class AugTransformsTest:
+    def __init__(self):
+        self.transforms = self._build_transforms()
+
+    def _build_transforms(self):
+        transforms = []
+
+        # Scharr filter
+        transforms.append(RandomTransform(
+            ConvTransform(kernel_type="Scharr"), apply_probability=0.9
+        ))
+
+        # Affine transforms
+        transforms.append(RandomTransform(
+            SpatialCustomTransform(
+                affine=True,
+            ), apply_probability=0.9
+        ))
+
+        return ComposeTransforms(transforms)
+
+    def __call__(self, data):
+        return self.transforms(**data)
