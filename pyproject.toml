@@ -33,7 +33,8 @@ dependencies = [
     "progress",
     "numpy",
     "tqdm",
-    "wandb"
+    "wandb",
+    "kornia"
 ]
 
 [project.urls]
