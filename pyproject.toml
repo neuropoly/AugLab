@@ -41,29 +41,6 @@ dependencies = [
 homepage = "https://github.com/neuropoly/AugLab"
 repository = "https://github.com/neuropoly/AugLab"
 
-[project.scripts]
-totalspineseg = "totalspineseg.inference:main"
-totalspineseg_init = "totalspineseg.init_inference:main"
-totalspineseg_cpdir = "totalspineseg.utils.cpdir:main"
-totalspineseg_fill_canal = "totalspineseg.utils.fill_canal:main"
-totalspineseg_augment = "totalspineseg.utils.augment:main"
-totalspineseg_iterative_label = "totalspineseg.utils.iterative_label:main"
-totalspineseg_largest_component = "totalspineseg.utils.largest_component:main"
-totalspineseg_resample = "totalspineseg.utils.resample:main"
-totalspineseg_preview_jpg = "totalspineseg.utils.preview_jpg:main"
-totalspineseg_map_labels = "totalspineseg.utils.map_labels:main"
-totalspineseg_transform_seg2image = "totalspineseg.utils.transform_seg2image:main"
-totalspineseg_reorient_canonical = "totalspineseg.utils.reorient_canonical:main"
-totalspineseg_average4d = "totalspineseg.utils.average4d:main"
-totalspineseg_crop_image2seg = "totalspineseg.utils.crop_image2seg:main"
-totalspineseg_extract_soft = "totalspineseg.utils.extract_soft:main"
-totalspineseg_extract_levels = "totalspineseg.utils.extract_levels:main"
-totalspineseg_extract_alternate = "totalspineseg.utils.extract_alternate:main"
-totalspineseg_install_weights = "totalspineseg.utils.install_weights:main"
-totalspineseg_predict_nnunet = "totalspineseg.utils.predict_nnunet:main"
-totalspineseg_measure_seg = "totalspineseg.utils.measure_seg:main"
-totalspineseg_generate_reports = "totalspineseg.utils.generate_reports:main"
-
 [build-system]
 requires = ["pip>=23", "setuptools>=67"]
 build-backend = "setuptools.build_meta"
