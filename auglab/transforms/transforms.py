@@ -19,13 +19,14 @@ from auglab.transforms.contrast import ConvTransform, HistogramEqualTransform, F
 from auglab.transforms.fromSeg import RedistributeTransform
 from auglab.transforms.spatial import SpatialCustomTransform, ShapeTransform
 
-class AugTransforms:
+class AugTransforms(ComposeTransforms):
     def __init__(self, json_path: str):
         # Load transform parameters from JSON
         config_path = os.path.join(json_path)
         with open(config_path, 'r') as f:
             self.transform_params = json.load(f)
         self.transforms = self._build_transforms()
+        super().__init__(transforms=self.transforms)
 
     def _build_transforms(self):
         transform_params = self.transform_params
@@ -195,14 +196,12 @@ class AugTransforms:
             ), apply_probability=spatial_prob
         ))
 
-        return ComposeTransforms(transforms)
+        return transforms
 
-    def __call__(self, data):
-        return self.transforms(**data)
-
-class AugTransformsTest:
+class AugTransformsTest(ComposeTransforms):
     def __init__(self):
         self.transforms = self._build_transforms()
+        super().__init__(transforms=self.transforms)
 
     def _build_transforms(self):
         transforms = []
@@ -219,7 +218,4 @@ class AugTransformsTest:
             ), apply_probability=0.9
         ))
 
-        return ComposeTransforms(transforms)
-
-    def __call__(self, data):
-        return self.transforms(**data)
+        return transforms
