@@ -214,7 +214,10 @@ def apply_convolution(img: torch.Tensor, kernel: torch.Tensor, dim: int) -> torc
 
     # padding = (left, right, top, bottom)
     img = F.pad(img, padding, mode="reflect")
-    img = F.conv2d(img, kernel, groups=img.shape[-(1 + dim)])
+    if dim == 2:
+        img = F.conv2d(img, kernel, groups=img.shape[-(1 + dim)])
+    else:  # dim == 3
+        img = F.conv3d(img, kernel, groups=img.shape[-(1 + dim)])
 
     img = F_t._cast_squeeze_out(img, need_cast, need_squeeze, out_dtype)
     return img
