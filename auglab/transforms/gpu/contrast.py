@@ -91,14 +91,18 @@ class RandomConvTransformGPU(ImageOnlyTransform):
     ) -> Tensor:
         # Initialize kernel
         kernel = self.get_kernel(device=input.device)
-
+        
         # Apply convolution
-        img = apply_convolution(input, kernel, dim=3)
-
-        # Apply absolute value if specified
-        if self.absolute:
-            img = torch.abs(img)
-        return img
+        if self.kernel_type == 'Laplace':
+            tot_ = apply_convolution(input, kernel, dim=3)
+        elif self.kernel_type == 'Scharr':
+            tot_ = torch.zeros_like(input, device=input.device)
+            for k in kernel:
+                if self.absolute:
+                    tot_ += torch.abs(apply_convolution(input, k, dim=3))
+                else:
+                    tot_ += apply_convolution(input, k, dim=3)
+        return tot_
 
 def apply_convolution(img: torch.Tensor, kernel: torch.Tensor, dim: int) -> torch.Tensor:
     '''
