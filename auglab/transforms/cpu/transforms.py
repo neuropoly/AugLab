@@ -208,7 +208,10 @@ class AugTransformsTest(ComposeTransforms):
 
         # Scharr filter
         transforms.append(RandomTransform(
-            ConvTransform(kernel_type="Scharr"), apply_probability=0.9
+            ConvTransform(
+                kernel_type="Scharr",
+                absolute=True,
+            ), apply_probability=0.9
         ))
 
         # Affine transforms
