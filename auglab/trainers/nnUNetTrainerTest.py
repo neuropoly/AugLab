@@ -12,6 +12,8 @@ from batchgeneratorsv2.transforms.utils.nnunet_masking import MaskImageTransform
 from batchgeneratorsv2.transforms.utils.random import RandomTransform
 from batchgeneratorsv2.transforms.utils.remove_label import RemoveLabelTansform
 from batchgeneratorsv2.transforms.utils.seg_to_regions import ConvertSegmentationToRegionsTransform
+from batchgeneratorsv2.transforms.utils.pseudo2d import Convert3DTo2DTransform, Convert2DTo3DTransform
+from batchgeneratorsv2.transforms.spatial.spatial import SpatialTransform
 
 import torch
 from torch import autocast
@@ -47,9 +49,33 @@ class nnUNetTrainerTest(nnUNetTrainer):
         ### Adds transforms
         transforms.append(AugTransformsTest())
 
-        ## Removed do_dummy_2d_data_aug
+        ### Keep some nnunet transforms
+        if do_dummy_2d_data_aug:
+            ignore_axes = (0,)
+            transforms.append(Convert3DTo2DTransform())
+            patch_size_spatial = patch_size[1:]
+        else:
+            patch_size_spatial = patch_size
+            ignore_axes = None
+        transforms.append(
+            SpatialTransform(
+                patch_size_spatial, 
+                patch_center_dist_from_border=0, 
+                random_crop=False, 
+                p_elastic_deform=0,
+                p_rotation=0,
+                rotation=rotation_for_DA, 
+                p_scaling=0, 
+                scaling=(0.7, 1.4), 
+                p_synchronize_scaling_across_axes=1,
+                bg_style_seg_sampling=False, 
+                mode_seg='nearest'
+            )
+        )
+
+        if do_dummy_2d_data_aug:
+            transforms.append(Convert2DTo3DTransform())
         
-        ## Unclear what this does
         if use_mask_for_norm is not None and any(use_mask_for_norm):
             transforms.append(MaskImageTransform(
                 apply_to_channels=[i for i in range(len(use_mask_for_norm)) if use_mask_for_norm[i]],
@@ -131,9 +157,33 @@ class nnUNetTrainerTestGPU(nnUNetTrainer):
     ) -> BasicTransform:
         transforms = []
 
-        ## Removed do_dummy_2d_data_aug
+        ### Keep some nnunet transforms
+        if do_dummy_2d_data_aug:
+            ignore_axes = (0,)
+            transforms.append(Convert3DTo2DTransform())
+            patch_size_spatial = patch_size[1:]
+        else:
+            patch_size_spatial = patch_size
+            ignore_axes = None
+        transforms.append(
+            SpatialTransform(
+                patch_size_spatial, 
+                patch_center_dist_from_border=0, 
+                random_crop=False, 
+                p_elastic_deform=0,
+                p_rotation=0,
+                rotation=rotation_for_DA, 
+                p_scaling=0, 
+                scaling=(0.7, 1.4), 
+                p_synchronize_scaling_across_axes=1,
+                bg_style_seg_sampling=False, 
+                mode_seg='nearest'
+            )
+        )
+
+        if do_dummy_2d_data_aug:
+            transforms.append(Convert2DTo3DTransform())
         
-        ## Unclear what this does
         if use_mask_for_norm is not None and any(use_mask_for_norm):
             transforms.append(MaskImageTransform(
                 apply_to_channels=[i for i in range(len(use_mask_for_norm)) if use_mask_for_norm[i]],
