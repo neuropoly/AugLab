@@ -75,7 +75,7 @@ def aug_flip(img, seg):
 
 def aug_affine(img, seg):
     if img.shape[0] == 2: # Step2: channel 1 --> image / channel 2 --> odd discs segmentation
-        subject = tio.RandomAffine(degrees=10, translate=(0.1, 0.1, 0.1), scale=(0.9, 1.1))(tio.Subject(
+        subject = tio.RandomAffine(degrees=10, translation=(0.1, 0.1, 0.1), scales=(0.9, 1.1))(tio.Subject(
             image=tio.ScalarImage(tensor=torch.unsqueeze(img[0], dim=0)),
             discs=tio.LabelMap(tensor=torch.unsqueeze(img[1], dim=0)),
             seg=tio.LabelMap(tensor=seg)
@@ -83,7 +83,7 @@ def aug_affine(img, seg):
         img_out = torch.cat((subject.image.data, subject.discs.data), axis=0)
         seg_out = subject.seg.data
     else:
-        subject = tio.RandomAffine(degrees=10, translate=(0.1, 0.1, 0.1), scale=(0.9, 1.1))(tio.Subject(
+        subject = tio.RandomAffine(degrees=10, translation=(0.1, 0.1, 0.1), scales=(0.9, 1.1))(tio.Subject(
             image=tio.ScalarImage(tensor=img),
             seg=tio.LabelMap(tensor=seg)
         ))
