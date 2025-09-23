@@ -21,7 +21,7 @@ import numpy as np
 
 import auglab.configs as configs
 from auglab.transforms.cpu.transforms import AugTransformsTest
-from auglab.transforms.gpu.transforms import DataAugmentationGPU
+from auglab.transforms.gpu.transforms import AugTransformsGPU
 
 class nnUNetTrainerTest(nnUNetTrainer):
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
@@ -113,7 +113,7 @@ class nnUNetTrainerTestGPU(nnUNetTrainer):
         # Load transform parameters from json file
         configs_path = importlib.resources.files(configs)
         json_path = configs_path / "transform_params_gpu.json"
-        self.transforms = DataAugmentationGPU(json_path=str(json_path)).to(self.device)
+        self.transforms = AugTransformsGPU(json_path=str(json_path)).to(self.device)
 
     @staticmethod
     def get_training_transforms(
