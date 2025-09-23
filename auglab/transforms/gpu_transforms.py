@@ -2,28 +2,28 @@ import os, json
 
 import kornia as K
 from kornia.augmentation import RandomAffine3D
+from kornia.augmentation import AugmentationSequential
+from kornia.constants import Resample
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
 import torchvision.transforms._functional_tensor as F_t
 from torch.distributions import Bernoulli
 
-class DataAugmentationGPU(nn.Module):
+class DataAugmentationGPU(AugmentationSequential):
     """
-    Based on https://www.kornia.org/tutorials/nbs/data_augmentation_kornia_lightning.html#run-training 
     Module to perform data augmentation on GPU.
     """
 
     def __init__(self, json_path: str):
-        super().__init__()
-
         # Load transform parameters from JSON
         config_path = os.path.join(json_path)
         with open(config_path, 'r') as f:
             self.transform_params = json.load(f)
-        self.transforms = self._build_transforms()
-    
-    def _build_transforms(self) -> nn.Module:
+        transforms = self._build_transforms()
+        super().__init__(*transforms, data_keys=["input", "mask"], same_on_batch=False)
+
+    def _build_transforms(self) -> list[nn.Module]:
         transforms = []
 
         # Scharr filter
@@ -69,14 +69,7 @@ class DataAugmentationGPU(nn.Module):
             p=affine_params.get('probability'),
             keepdim=False
         ))
-        return nn.Sequential(*transforms)
-
-    @torch.no_grad()  # disable gradients for effiency
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x_out = self.transforms(x)  # BxCxHxW
-        if self._apply_color_jitter:
-            x_out = self.jitter(x_out)
-        return x_out
+        return transforms
 
 class RandomTransformGPU(nn.Module):
     def __init__(self, transform: nn.Module, apply_probability: float = 1):
