@@ -33,7 +33,7 @@ from monai.transforms import (
 # Import AugLab custom transforms
 from auglab.utils.utils import fetch_image_config, parser2config, tuple_type_float, tuple_type_int, adjust_learning_rate, tuple2string, compute_dsc, get_validation_image
 import auglab.configs as configs
-from auglab.transforms.transforms import AugTransforms
+from auglab.transforms.cpu.transforms import AugTransforms
 
 def get_parser():
     # parse command line arguments

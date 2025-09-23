@@ -25,7 +25,7 @@ import torch
 import importlib
 
 import auglab.configs as configs
-from auglab.transforms.transforms import AugTransforms
+from auglab.transforms.cpu.transforms import AugTransforms
 
 class nnUNetTrainerDAExt(nnUNetTrainer):
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,

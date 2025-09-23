@@ -14,10 +14,10 @@ from batchgeneratorsv2.transforms.spatial.spatial import SpatialTransform
 from batchgeneratorsv2.transforms.utils.random import RandomTransform
 from batchgeneratorsv2.transforms.utils.compose import ComposeTransforms
 
-from auglab.transforms.artifact import ArtifactTransform
-from auglab.transforms.contrast import ConvTransform, HistogramEqualTransform, FunctionTransform
-from auglab.transforms.fromSeg import RedistributeTransform
-from auglab.transforms.spatial import SpatialCustomTransform, ShapeTransform
+from auglab.transforms.cpu.artifact import ArtifactTransform
+from auglab.transforms.cpu.contrast import ConvTransform, HistogramEqualTransform, FunctionTransform
+from auglab.transforms.cpu.fromSeg import RedistributeTransform
+from auglab.transforms.cpu.spatial import SpatialCustomTransform, ShapeTransform
 
 class AugTransforms(ComposeTransforms):
     def __init__(self, json_path: str):

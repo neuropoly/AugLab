@@ -20,8 +20,8 @@ from typing import Tuple, Union, List
 import numpy as np
 
 import auglab.configs as configs
-from auglab.transforms.transforms import AugTransformsTest
-from auglab.transforms.gpu_transforms import DataAugmentationGPU
+from auglab.transforms.cpu.transforms import AugTransformsTest
+from auglab.transforms.gpu.transforms import DataAugmentationGPU
 
 class nnUNetTrainerTest(nnUNetTrainer):
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,

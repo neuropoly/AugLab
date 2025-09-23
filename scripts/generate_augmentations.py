@@ -9,7 +9,7 @@ import torch
 import warnings
 
 from auglab.utils.utils import fetch_image_config
-from auglab.transforms.transforms import AugTransforms
+from auglab.transforms.cpu.transforms import AugTransforms
 from auglab.utils.image import Image, resample_nib, zeros_like
 
 warnings.filterwarnings("ignore")
