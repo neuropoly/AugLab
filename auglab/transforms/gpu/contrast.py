@@ -51,61 +51,50 @@ class ConvTransformGPU(ImageOnlyTransform):
         else:
             self.kernel_type = kernel_type
         self.absolute = absolute
-        self.spatial_dims = spatial_dims
-        self.kernel = None
 
     def get_kernel(self, device: torch.device) -> torch.Tensor:
-        spatial_dims = self.spatial_dims
-        if spatial_dims == 2:
-            if self.kernel_type == "Laplace":
-                kernel = torch.tensor([[-1, -1, -1], [-1, 8, -1], [-1, -1, -1]], dtype=torch.float32, device=device)
-            elif self.kernel_type == "Scharr":
-                kernel_x = torch.tensor([[-3, 0, 3], [-10, 0, -10], [-3, 0, 3]], dtype=torch.float32, device=device)
-                kernel_y = torch.tensor([[-3, -10, -3], [0, 0, 0], [3, 10, 3]], dtype=torch.float32, device=device)
-                kernel = [kernel_x, kernel_y]
-        elif spatial_dims == 3:
-            if self.kernel_type == "Laplace":
-                kernel = -1.0 * torch.ones(3, 3, 3, dtype=torch.float32, device=device)
-                kernel[1, 1, 1] = 26.0
-            elif self.kernel_type == "Scharr":
-                kernel_x = torch.tensor([[[  9,    0,    -9],
-                                          [ 30,    0,   -30],
-                                          [  9,    0,    -9]],
+        if self.kernel_type == "Laplace":
+            kernel = -1.0 * torch.ones(3, 3, 3, dtype=torch.float32, device=device)
+            kernel[1, 1, 1] = 26.0
+        elif self.kernel_type == "Scharr":
+            kernel_x = torch.tensor([[[  9,    0,    -9],
+                                        [ 30,    0,   -30],
+                                        [  9,    0,    -9]],
 
-                                          [[ 30,    0,   -30],
-                                           [100,    0,  -100],
-                                           [ 30,    0,   -30]],
+                                        [[ 30,    0,   -30],
+                                        [100,    0,  -100],
+                                        [ 30,    0,   -30]],
 
-                                          [[  9,    0,    -9],
-                                           [ 30,    0,   -30],
-                                           [  9,    0,    -9]]], dtype=torch.float32, device=device)
-                
-                kernel_y = torch.tensor([[[    9,   30,    9],
-                                          [    0,    0,    0],
-                                          [   -9,  -30,   -9]],
+                                        [[  9,    0,    -9],
+                                        [ 30,    0,   -30],
+                                        [  9,    0,    -9]]], dtype=torch.float32, device=device)
+            
+            kernel_y = torch.tensor([[[    9,   30,    9],
+                                        [    0,    0,    0],
+                                        [   -9,  -30,   -9]],
 
-                                         [[  30,  100,   30],
-                                          [   0,    0,    0],
-                                          [ -30, -100,  -30]],
+                                        [[  30,  100,   30],
+                                        [   0,    0,    0],
+                                        [ -30, -100,  -30]],
 
-                                         [[   9,   30,    9],
-                                          [   0,    0,    0],
-                                          [  -9,  -30,   -9]]], dtype=torch.float32, device=device)
+                                        [[   9,   30,    9],
+                                        [   0,    0,    0],
+                                        [  -9,  -30,   -9]]], dtype=torch.float32, device=device)
 
-                kernel_z = torch.tensor([[[   9,   30,   9],
-                                          [  30,  100,  30],
-                                          [   9,   30,   9]],
+            kernel_z = torch.tensor([[[   9,   30,   9],
+                                        [  30,  100,  30],
+                                        [   9,   30,   9]],
 
-                                         [[   0,    0,   0],
-                                          [   0,    0,   0],
-                                          [   0,    0,   0]],
+                                        [[   0,    0,   0],
+                                        [   0,    0,   0],
+                                        [   0,    0,   0]],
 
-                                         [[   -9,  -30,  -9],
-                                          [  -30, -100, -30],
-                                          [   -9,  -30,  -9]]], dtype=torch.float32, device=device)
-                kernel = [kernel_x, kernel_y, kernel_z]
+                                        [[   -9,  -30,  -9],
+                                        [  -30, -100, -30],
+                                        [   -9,  -30,  -9]]], dtype=torch.float32, device=device)
+            kernel = [kernel_x, kernel_y, kernel_z]
         else:
-            raise ValueError(f"{self.__class__} can only handle 2D or 3D images.")
+            raise NotImplementedError('Currently only "Laplace" and "Scharr" are supported.')
         return kernel
 
     @torch.no_grad()  # disable gradients for efficiency
