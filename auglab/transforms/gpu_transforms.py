@@ -179,6 +179,7 @@ class ConvTransformGPU(nn.Module):
             raise ValueError(f"{self.__class__} can only handle 2D or 3D images.")
         return kernel
 
+    @torch.no_grad()  # disable gradients for efficiency
     def forward(self, img: torch.Tensor) -> torch.Tensor:
         '''
         We expect (N, C, X, Y) or (N, C, X, Y, Z) shaped inputs for image and seg
