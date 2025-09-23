@@ -3,33 +3,14 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 import torchvision.transforms._functional_tensor as F_t
-from torch.distributions import Bernoulli
+
+from typing import Any, Dict, Optional
+from kornia.core import Tensor
 
 from auglab.transforms.gpu.base import ImageOnlyTransform
 
-class RandomTransformGPU(nn.Module):
-    def __init__(self, transform: nn.Module, apply_probability: float = 1):
-        super().__init__()
-        self.transform = transform
-        self.apply_probability = apply_probability
 
-    def apply_transform(self, batch_size) -> bool:
-        return Bernoulli(self.apply_probability).sample(torch.Size([batch_size]))
-
-    @torch.no_grad()  # disable gradients for effiency
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        mask = self.apply_transform(x.shape[0]).to(dtype=torch.bool, device=x.device)
-        if mask.all():
-            return self.transform(x)
-        elif not mask.any():
-            return x
-        else:
-            # Apply transform only to selected images in the batch
-            x_out = x.clone()
-            x_out[mask] = self.transform(x[mask])
-            return x_out
-
-class ConvTransformGPU(ImageOnlyTransform):
+class RandomConvTransformGPU(ImageOnlyTransform):
     """Apply convolution to image.
     If the image is torch Tensor, it is expected to have [N, C, X, Y] or [N, C, X, Y, Z] shape.
     Based on https://docs.pytorch.org/vision/0.9/transforms.html#torchvision.transforms.GaussianBlur
@@ -44,8 +25,15 @@ class ConvTransformGPU(ImageOnlyTransform):
         Tensor: Convolved version of the input image.
 
     """
-    def __init__(self, kernel_type: str = 'Laplace', spatial_dims: int = 3, absolute: bool = False):
-        super().__init__()
+    def __init__(
+        self,
+        kernel_type: str = 'Laplace', 
+        absolute: bool = False,
+        same_on_batch: bool = False,
+        p: float = 1.0,
+        keepdim: bool = False,
+    ) -> None:
+        super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
         if kernel_type not in  ["Laplace","Scharr"]:
             raise NotImplementedError('Currently only "Laplace" and "Scharr" are supported.')
         else:
@@ -96,17 +84,16 @@ class ConvTransformGPU(ImageOnlyTransform):
         else:
             raise NotImplementedError('Currently only "Laplace" and "Scharr" are supported.')
         return kernel
-
+    
     @torch.no_grad()  # disable gradients for efficiency
-    def forward(self, img: torch.Tensor) -> torch.Tensor:
-        '''
-        We expect (N, C, X, Y) or (N, C, X, Y, Z) shaped inputs for image and seg
-        '''
+    def apply_transform(
+        self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
+    ) -> Tensor:
         # Initialize kernel
-        self.kernel = self.get_kernel(device=img.device)
+        kernel = self.get_kernel(device=input.device)
 
         # Apply convolution
-        img = apply_convolution(img, self.kernel, self.spatial_dims)
+        img = apply_convolution(input, kernel, dim=3)
 
         # Apply absolute value if specified
         if self.absolute:

@@ -3,14 +3,13 @@ import os, json
 from kornia.augmentation import AugmentationSequential
 import torch.nn as nn
 
-from auglab.transforms.gpu.contrast import ConvTransformGPU, RandomTransformGPU
+from auglab.transforms.gpu.contrast import RandomConvTransformGPU
 from auglab.transforms.gpu.spatial import RandomAffine3DCustom
 
 class DataAugmentationGPU(AugmentationSequential):
     """
     Module to perform data augmentation on GPU.
     """
-
     def __init__(self, json_path: str):
         # Load transform parameters from JSON
         config_path = os.path.join(json_path)
@@ -24,9 +23,10 @@ class DataAugmentationGPU(AugmentationSequential):
 
         # Scharr filter
         conv_params = self.transform_params.get('ConvTransform')
-        transforms.append(RandomTransformGPU(
-            ConvTransformGPU(kernel_type=conv_params['kernel_type'], spatial_dims=3, absolute=conv_params['absolute']),
-            apply_probability=conv_params.get('probability')
+        transforms.append(RandomConvTransformGPU(
+            kernel_type=conv_params['kernel_type'],
+            absolute=conv_params['absolute'],
+            p=conv_params['probability']
         ))
 
         # Gaussian blur
