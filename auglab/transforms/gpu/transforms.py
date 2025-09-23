@@ -22,12 +22,12 @@ class AugTransformsGPU(AugmentationSequential):
         transforms = []
 
         # Scharr filter
-        conv_params = self.transform_params.get('ConvTransform')
-        transforms.append(RandomConvTransformGPU(
-            kernel_type=conv_params['kernel_type'],
-            absolute=conv_params['absolute'],
-            p=conv_params['probability']
-        ))
+        # conv_params = self.transform_params.get('ConvTransform')
+        # transforms.append(RandomConvTransformGPU(
+        #     kernel_type=conv_params['kernel_type'],
+        #     absolute=conv_params['absolute'],
+        #     p=conv_params['probability']
+        # ))
 
         # Gaussian blur
         
