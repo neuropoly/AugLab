@@ -16,6 +16,7 @@ from kornia.geometry.boxes import Boxes
 from kornia.geometry.keypoints import Keypoints
 
 from typing import Any, Dict, List, Optional
+import copy
 
 class ImageOnlyTransform(RigidAffineAugmentationBase3D):
     r"""ImageOnlyTransform base class for customized image-only transformations.
@@ -92,13 +93,13 @@ class AugmentationSequentialCustom(AugmentationSequential):
 
 class MaskSequentialOpsCustom(MaskSequentialOps):
     @classmethod
-    def transform(
-        cls, input: Tensor, module: Module, param: ParamItem, extra_args: Optional[Dict[str, Any]] = None
-    ) -> Tensor:
+    def transform_list(
+        cls, input: List[Tensor], module: Module, param: ParamItem, extra_args: Optional[Dict[str, Any]] = None
+    ) -> List[Tensor]:
         """Apply a transformation with respect to the parameters.
 
         Args:
-            input: the input tensor.
+            input: list of input tensors.
             module: any torch Module but only kornia augmentation modules will count
                 to apply transformations.
             param: the corresponding parameters to the module.
@@ -106,41 +107,59 @@ class MaskSequentialOpsCustom(MaskSequentialOps):
         """
         if extra_args is None:
             extra_args = {}
-
         if isinstance(module, (K.GeometricAugmentationBase2D,)):
-            input = module.transform_masks(
-                input,
-                params=cls.get_instance_module_param(param),
-                flags=module.flags,
-                transform=module.transform_matrix,
-                **extra_args,
-            )
+            tfm_input = []
+            params = cls.get_instance_module_param(param)
+            params_i = copy.deepcopy(params)
+            for i, inp in enumerate(input):
+                params_i["batch_prob"] = params["batch_prob"][i]
+                tfm_inp = module.transform_masks(
+                    inp, params=params_i, flags=module.flags, transform=module.transform_matrix, **extra_args
+                )
+                tfm_input.append(tfm_inp)
+            input = tfm_input
 
         elif isinstance(module, (K.RigidAffineAugmentationBase3D,)):
-            ### Test 3D masks augmentations
-            input = module.transform_masks(
-                input,
-                params=cls.get_instance_module_param(param),
-                flags=module.flags,
-                transform=module.transform_matrix,
-                **extra_args,
-            )
-
-        elif isinstance(module, K.RandomTransplantation):
-            input = module(input, params=cls.get_instance_module_param(param), data_keys=[DataKey.MASK], **extra_args)
+            tfm_input = []
+            params = cls.get_instance_module_param(param)
+            params_i = copy.deepcopy(params)
+            for i, inp in enumerate(input):
+                params_i["batch_prob"] = params["batch_prob"][i]
+                tfm_inp = module.transform_masks(
+                    inp, params=params_i, flags=module.flags, transform=module.transform_matrix, **extra_args
+                )
+                tfm_input.append(tfm_inp)
+            input = tfm_input
 
         elif isinstance(module, (_AugmentationBase)):
-            input = module.transform_masks(
-                input, params=cls.get_instance_module_param(param), flags=module.flags, **extra_args
-            )
+            tfm_input = []
+            params = cls.get_instance_module_param(param)
+            params_i = copy.deepcopy(params)
+            for i, inp in enumerate(input):
+                params_i["batch_prob"] = params["batch_prob"][i]
+                tfm_inp = module.transform_masks(inp, params=params_i, flags=module.flags, **extra_args)
+                tfm_input.append(tfm_inp)
+            input = tfm_input
 
         elif isinstance(module, K.ImageSequential) and not module.is_intensity_only():
-            input = module.transform_masks(input, params=cls.get_sequential_module_param(param), extra_args=extra_args)
+            tfm_input = []
+            seq_params = cls.get_sequential_module_param(param)
+            for inp in input:
+                tfm_inp = module.transform_masks(inp, params=seq_params, extra_args=extra_args)
+                tfm_input.append(tfm_inp)
+            input = tfm_input
 
         elif isinstance(module, K.container.ImageSequentialBase):
-            input = module.transform_masks(input, params=cls.get_sequential_module_param(param), extra_args=extra_args)
+            tfm_input = []
+            seq_params = cls.get_sequential_module_param(param)
+            for inp in input:
+                tfm_inp = module.transform_masks(inp, params=seq_params, extra_args=extra_args)
+                tfm_input.append(tfm_inp)
+            input = tfm_input
 
         elif isinstance(module, (K.auto.operations.OperationBase,)):
-            input = MaskSequentialOps.transform(input, module=module.op, param=param, extra_args=extra_args)
-
+            raise NotImplementedError(
+                "The support for list of masks under auto operations are not yet supported. You are welcome to file a"
+                " PR in our repo."
+            )
         return input
