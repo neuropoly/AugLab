@@ -254,9 +254,7 @@ class nnUNetTrainerTestGPU(nnUNetTrainer):
         # If the device_type is 'cpu' then it's slow as heck and needs to be disabled.
         # If the device_type is 'mps' then it will complain that mps is not implemented, even if enabled=False is set. Whyyyyyyy. (this is why we don't make use of enabled=False)
         # So autocast will only be active if we have a cuda device.
-        with autocast(self.device.type, enabled=True) if self.device.type == 'cuda' else dummy_context():
-            print('INPUT SHAPE:', data.shape, 'TARGET SHAPE:', target.shape)
-            
+        with autocast(self.device.type, enabled=True) if self.device.type == 'cuda' else dummy_context():            
             # Apply GPU augmentations to full-resolution data/target
             data, target = self.transforms(data, target)
             
@@ -265,7 +263,6 @@ class nnUNetTrainerTestGPU(nnUNetTrainer):
                 deep_supervision_scales = self._get_deep_supervision_scales()
                 ds_transform = DownsampleSegForDSTransformCustom(ds_scales=deep_supervision_scales)
                 target = ds_transform(target)
-                print('DOWNSAMPLED TARGETS:', [t.shape for t in target])
             
             output = self.network(data)
             # del data
