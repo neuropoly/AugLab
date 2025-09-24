@@ -194,9 +194,7 @@ class MaskSequentialOpsCustom(MaskSequentialOps):
             tfm_input = []
             params = cls.get_instance_module_param(param)
             params_i = copy.deepcopy(params)
-            print(params_i["batch_prob"])
             for i, inp in enumerate(input):
-                print(i, inp.shape)
                 params_i["batch_prob"] = params["batch_prob"][i]
                 tfm_inp = module.transform_masks(
                     inp, params=params_i, flags=module.flags, transform=module.transform_matrix, **extra_args
