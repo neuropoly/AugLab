@@ -12,6 +12,7 @@ from kornia.geometry.keypoints import Keypoints
 from kornia.augmentation.container.patch import PatchSequential
 from kornia.augmentation.container.video import VideoSequential
 from kornia.augmentation.container.image import ImageSequential
+from kornia.augmentation.container.ops import AugmentationSequentialOps
 
 from kornia.augmentation import AugmentationSequential
 from kornia.augmentation.container.ops import MaskSequentialOps
@@ -137,7 +138,7 @@ class AugmentationSequentialCustom(AugmentationSequential):
             if self.data_keys[0] != DataKey.INPUT:
                 raise NotImplementedError(f"The first input must be {DataKey.INPUT}.")
 
-        self.transform_op = AugmentationSequentialOps(self.data_keys)
+        self.transform_op = AugmentationSequentialOpsCustom(self.data_keys)
 
         self.contains_video_sequential: bool = False
         self.contains_3d_augmentation: bool = False
@@ -234,7 +235,7 @@ class MaskSequentialOpsCustom(MaskSequentialOps):
             )
         return input
 
-class AugmentationSequentialOps:
+class AugmentationSequentialOpsCustom(AugmentationSequentialOps):
     def transform(
         self,
         *arg: DataType,
