@@ -117,6 +117,7 @@ class MaskSequentialOpsCustom(MaskSequentialOps):
             )
 
         elif isinstance(module, (K.RigidAffineAugmentationBase3D,)):
+            ### Test 3D masks augmentations
             input = module.transform_masks(
                 input,
                 params=cls.get_instance_module_param(param),

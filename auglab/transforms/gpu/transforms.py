@@ -5,8 +5,9 @@ import torch.nn as nn
 
 from auglab.transforms.gpu.contrast import RandomConvTransformGPU
 from auglab.transforms.gpu.spatial import RandomAffine3DCustom
+from auglab.transforms.gpu.base import AugmentationSequentialCustom
 
-class AugTransformsGPU(AugmentationSequential):
+class AugTransformsGPU(AugmentationSequentialCustom):
     """
     Module to perform data augmentation on GPU.
     """
