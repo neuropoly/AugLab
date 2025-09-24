@@ -24,6 +24,7 @@ import numpy as np
 import auglab.configs as configs
 from auglab.transforms.cpu.transforms import AugTransformsTest
 from auglab.transforms.gpu.transforms import AugTransformsGPU
+from auglab.trainers.utils import DownsampleSegForDSTransformCustom
 
 class nnUNetTrainerTest(nnUNetTrainer):
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
@@ -234,8 +235,9 @@ class nnUNetTrainerTestGPU(nnUNetTrainer):
                 )
             )
 
-        if deep_supervision_scales is not None:
-            transforms.append(DownsampleSegForDSTransform(ds_scales=deep_supervision_scales))
+        # NOTE: DownsampleSegForDSTransform is now handled in train_step for GPU augmentations
+        # if deep_supervision_scales is not None:
+        #     transforms.append(DownsampleSegForDSTransform(ds_scales=deep_supervision_scales))
 
         return ComposeTransforms(transforms)
     
@@ -244,10 +246,8 @@ class nnUNetTrainerTestGPU(nnUNetTrainer):
         target = batch['target']
 
         data = data.to(self.device, non_blocking=True)
-        if isinstance(target, list):
-            target = [i.to(self.device, non_blocking=True) for i in target]
-        else:
-            target = target.to(self.device, non_blocking=True)
+        # Now target should be a single tensor, not a list
+        target = target.to(self.device, non_blocking=True)
 
         self.optimizer.zero_grad(set_to_none=True)
         # Autocast can be annoying
@@ -255,8 +255,18 @@ class nnUNetTrainerTestGPU(nnUNetTrainer):
         # If the device_type is 'mps' then it will complain that mps is not implemented, even if enabled=False is set. Whyyyyyyy. (this is why we don't make use of enabled=False)
         # So autocast will only be active if we have a cuda device.
         with autocast(self.device.type, enabled=True) if self.device.type == 'cuda' else dummy_context():
-            print('INPUT SHAPE:', data.shape, 'TARGET SHAPE:', target.shape if not isinstance(target, list) else [t.shape for t in target])
+            print('INPUT SHAPE:', data.shape, 'TARGET SHAPE:', target.shape)
+            
+            # Apply GPU augmentations to full-resolution data/target
             data, target = self.transforms(data, target)
+            
+            # Create multi-scale targets for deep supervision after augmentation
+            if self.enable_deep_supervision:
+                deep_supervision_scales = self._get_deep_supervision_scales()
+                ds_transform = DownsampleSegForDSTransformCustom(ds_scales=deep_supervision_scales)
+                target = ds_transform(target)
+                print('DOWNSAMPLED TARGETS:', [t.shape for t in target])
+            
             output = self.network(data)
             # del data
             l = self.loss(output, target)
