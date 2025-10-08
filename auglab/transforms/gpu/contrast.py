@@ -1,4 +1,3 @@
-
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
@@ -9,7 +8,7 @@ from kornia.core import Tensor
 
 from auglab.transforms.gpu.base import ImageOnlyTransform
 
-
+## Convolution transform
 class RandomConvTransformGPU(ImageOnlyTransform):
     """Apply convolution to image.
     If the image is torch Tensor, it is expected to have [N, C, X, Y] or [N, C, X, Y, Z] shape.
@@ -171,3 +170,46 @@ def get_gaussian_kernel3d(kernel_size: int, sigma: float, dtype: torch.dtype, de
     kernel /= kernel.sum()
 
     return kernel
+
+## Noise transform
+class RandomGaussianNoiseGPU(ImageOnlyTransform):
+    """Add random Gaussian noise to image.
+    If the image is torch Tensor, it is expected to have [N, C, X, Y] or [N, C, X, Y, Z] shape.
+
+    Args:
+        mean (float): Mean of the Gaussian noise. Default is 0.0.
+        std (float): Standard deviation of the Gaussian noise. Default is 0.1.
+        same_on_batch (bool): Apply the same transformation across the batch. Default is False.
+        p (float): Probability of applying the transform. Default is 1.0.
+        keepdim (bool): Whether to keep the number of dimensions. Default is False.
+
+    Returns:
+        Tensor: Image with added Gaussian noise.
+    """
+    
+    def __init__(
+        self,
+        mean: float = 0.0,
+        std: float = 0.1,
+        same_on_batch: bool = False,
+        p: float = 1.0,
+        keepdim: bool = False,
+        **kwargs,
+    ) -> None:
+        super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
+        self.mean = mean
+        self.std = std
+
+    @torch.no_grad()  # disable gradients for efficiency
+    def apply_transform(
+        self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
+    ) -> Tensor:
+        # Generate Gaussian noise with the same shape as input
+        std = torch.rand(1, device=input.device, dtype=input.dtype) * self.std
+        noise = torch.randn_like(input, device=input.device, dtype=input.dtype)
+        noise = noise * std + self.mean
+        
+        # Add noise to the input
+        output = input + noise
+        
+        return output

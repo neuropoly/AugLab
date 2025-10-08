@@ -3,7 +3,7 @@ import os, json
 from kornia.augmentation import AugmentationSequential
 import torch.nn as nn
 
-from auglab.transforms.gpu.contrast import RandomConvTransformGPU
+from auglab.transforms.gpu.contrast import RandomConvTransformGPU, RandomGaussianNoiseGPU
 from auglab.transforms.gpu.spatial import RandomAffine3DCustom
 from auglab.transforms.gpu.base import AugmentationSequentialCustom
 
@@ -23,22 +23,28 @@ class AugTransformsGPU(AugmentationSequentialCustom):
         transforms = []
 
         # Scharr filter
-        conv_params = self.transform_params.get('ScharrTransform')
+        scharr_params = self.transform_params.get('ScharrTransform')
         transforms.append(RandomConvTransformGPU(
-            kernel_type=conv_params['kernel_type'],
-            p=conv_params['probability'],
-            absolute=conv_params['absolute'],
+            kernel_type=scharr_params['kernel_type'],
+            p=scharr_params['probability'],
+            absolute=scharr_params['absolute'],
         ))
 
         # Gaussian blur
-        conv_params = self.transform_params.get('GaussianBlurTransform')
+        gaussianblur_params = self.transform_params.get('GaussianBlurTransform')
         transforms.append(RandomConvTransformGPU(
-            kernel_type=conv_params['kernel_type'],
-            p=conv_params['probability'],
-            sigma=conv_params['sigma'],
+            kernel_type=gaussianblur_params['kernel_type'],
+            p=gaussianblur_params['probability'],
+            sigma=gaussianblur_params['sigma'],
         ))
 
         # Noise transforms
+        noise_params = self.transform_params.get('GaussianNoiseTransform')
+        transforms.append(RandomGaussianNoiseGPU(
+            mean=noise_params['mean'],
+            std=noise_params['std'],
+            p=noise_params['probability'],
+        ))
 
         # Brightness transforms
 

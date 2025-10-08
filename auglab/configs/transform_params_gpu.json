@@ -9,6 +9,11 @@
         "sigma": 1.0,
         "probability": 0.9
     },
+    "GaussianNoiseTransform": {
+        "mean": 0.0,
+        "std": 1.0,
+        "probability": 0.9
+    },
     "AffineTransform": {
         "degrees": 10,
         "translate": [0.1, 0.1, 0.1],
