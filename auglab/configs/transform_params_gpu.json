@@ -1,7 +1,12 @@
 {
-    "ConvTransform": {
+    "ScharrTransform": {
         "kernel_type": "Scharr",
         "absolute": true,
+        "probability": 0.9
+    },
+    "GaussianBlurTransform": {
+        "kernel_type": "GaussianBlur",
+        "sigma": 1.0,
         "probability": 0.9
     },
     "AffineTransform": {

@@ -23,15 +23,20 @@ class AugTransformsGPU(AugmentationSequentialCustom):
         transforms = []
 
         # Scharr filter
-        conv_params = self.transform_params.get('ConvTransform')
+        conv_params = self.transform_params.get('ScharrTransform')
         transforms.append(RandomConvTransformGPU(
             kernel_type=conv_params['kernel_type'],
+            p=conv_params['probability'],
             absolute=conv_params['absolute'],
-            p=conv_params['probability']
         ))
 
         # Gaussian blur
-        
+        conv_params = self.transform_params.get('GaussianBlurTransform')
+        transforms.append(RandomConvTransformGPU(
+            kernel_type=conv_params['kernel_type'],
+            p=conv_params['probability'],
+            sigma=conv_params['sigma'],
+        ))
 
         # Noise transforms
 
@@ -61,7 +66,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             degrees=affine_params.get('degrees'),
             translate=affine_params.get('translate'),
             scale=affine_params.get('scale'),
-            shears=None, #affine_params.get('shear'),
+            shears=affine_params.get('shear'),
             resample='bilinear',
             p=affine_params.get('probability'),
             keepdim=False

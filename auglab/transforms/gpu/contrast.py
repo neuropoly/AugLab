@@ -28,17 +28,18 @@ class RandomConvTransformGPU(ImageOnlyTransform):
     def __init__(
         self,
         kernel_type: str = 'Laplace', 
-        absolute: bool = False,
         same_on_batch: bool = False,
         p: float = 1.0,
         keepdim: bool = False,
+        **kwargs,
     ) -> None:
         super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
-        if kernel_type not in  ["Laplace","Scharr"]:
-            raise NotImplementedError('Currently only "Laplace" and "Scharr" are supported.')
+        if kernel_type not in  ["Laplace","Scharr","GaussianBlur"]:
+            raise NotImplementedError('Currently only "Laplace", "Scharr" and "GaussianBlur" are supported.')
         else:
             self.kernel_type = kernel_type
-        self.absolute = absolute
+        self.absolute = kwargs.get('absolute', False)
+        self.sigma = kwargs.get('sigma', 1.0)
 
     def get_kernel(self, device: torch.device) -> torch.Tensor:
         if self.kernel_type == "Laplace":
@@ -81,6 +82,10 @@ class RandomConvTransformGPU(ImageOnlyTransform):
                                         [  -30, -100, -30],
                                         [   -9,  -30,  -9]]], dtype=torch.float32, device=device)
             kernel = [kernel_x, kernel_y, kernel_z]
+        elif self.kernel_type == "GaussianBlur":
+            sigma = torch.rand((1, 3), device=device) * self.sigma
+            kernel_size = 3
+            kernel = get_gaussian_kernel3d(kernel_size, sigma, torch.float32, device)
         else:
             raise NotImplementedError('Currently only "Laplace" and "Scharr" are supported.')
         return kernel
@@ -93,7 +98,7 @@ class RandomConvTransformGPU(ImageOnlyTransform):
         kernel = self.get_kernel(device=input.device)
         
         # Apply convolution
-        if self.kernel_type == 'Laplace':
+        if self.kernel_type in ['Laplace', 'GaussianBlur']:
             tot_ = apply_convolution(input, kernel, dim=3)
         elif self.kernel_type == 'Scharr':
             tot_ = torch.zeros_like(input, device=input.device)
@@ -131,3 +136,38 @@ def apply_convolution(img: torch.Tensor, kernel: torch.Tensor, dim: int) -> torc
 
     img = F_t._cast_squeeze_out(img, need_cast, need_squeeze, out_dtype)
     return img
+
+def get_gaussian_kernel1d(kernel_size: int, sigma: float, dtype: torch.dtype, device: torch.device) -> Tensor:
+    """Create a 1D Gaussian kernel."""
+
+    x = torch.arange(kernel_size, dtype=dtype, device=device)
+    pdf = torch.exp(-0.5 * (x / sigma).pow(2))
+    kernel1d = pdf / pdf.sum()
+
+    return kernel1d
+
+def get_gaussian_kernel3d(kernel_size: int, sigma: float, dtype: torch.dtype, device: torch.device) -> Tensor:
+    """
+    Create a 3D Gaussian kernel by multiplying 1D kernels along each axis.
+    Args:
+        kernel_size (int)
+        sigma (float or tuple of three floats): Standard deviation of the Gaussian kernel.
+    """
+    if isinstance(sigma, (int, float)):
+        sigma = (sigma, sigma, sigma)
+    elif isinstance(sigma, (list, tuple)):
+        assert len(sigma) == 3, "Sigma must be a float or a tuple of three floats."
+    else:
+        raise TypeError("Sigma must be a float or a tuple of three floats.")
+    
+    gz = get_gaussian_kernel1d(kernel_size, sigma[0], device, dtype)
+    gy = get_gaussian_kernel1d(kernel_size, sigma[1], device, dtype)
+    gx = get_gaussian_kernel1d(kernel_size, sigma[2], device, dtype)
+
+    # Outer product using broadcasting
+    kernel = gz[:, None, None] * gy[None, :, None] * gx[None, None, :]
+
+    # Normalize
+    kernel /= kernel.sum()
+
+    return kernel
