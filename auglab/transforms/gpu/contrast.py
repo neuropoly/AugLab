@@ -242,7 +242,7 @@ class RandomBrightnessGPU(ImageOnlyTransform):
     
     def __init__(
         self,
-        multiplier_range: tuple[float, float] = (0.9, 1.1),
+        brightness_range: list[float, float] = (0.9, 1.1),
         apply_to_channel: list[int] = [0],  # Apply to first channel by default
         same_on_batch: bool = False,
         p: float = 1.0,
@@ -250,7 +250,7 @@ class RandomBrightnessGPU(ImageOnlyTransform):
         **kwargs,
     ) -> None:
         super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
-        self.multiplier_range = multiplier_range
+        self.brightness_range = brightness_range
         self.apply_to_channel = apply_to_channel
 
     @torch.no_grad()  # disable gradients for efficiency
@@ -261,8 +261,8 @@ class RandomBrightnessGPU(ImageOnlyTransform):
         # Apply brightness adjustment
         for c in self.apply_to_channel:
             if self.same_on_batch:
-                factor = torch.rand(1, device=input.device, dtype=input.dtype) * (self.multiplier_range[1] - self.multiplier_range[0]) + self.multiplier_range[0]
+                factor = torch.rand(1, device=input.device, dtype=input.dtype) * (self.brightness_range[1] - self.brightness_range[0]) + self.brightness_range[0]
             else:
-                factor = torch.rand(input.shape[0], device=input.device, dtype=input.dtype) * (self.multiplier_range[1] - self.multiplier_range[0]) + self.multiplier_range[0]
+                factor = torch.rand(input.shape[0], device=input.device, dtype=input.dtype) * (self.brightness_range[1] - self.brightness_range[0]) + self.brightness_range[0]
             input[:, c] *= factor
         return input
