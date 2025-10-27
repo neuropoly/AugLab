@@ -27,6 +27,7 @@ class RandomConvTransformGPU(ImageOnlyTransform):
     def __init__(
         self,
         kernel_type: str = 'Laplace', 
+        apply_to_channel: list[int] = [0],  # Apply to first channel by default
         same_on_batch: bool = False,
         p: float = 1.0,
         keepdim: bool = False,
@@ -37,6 +38,7 @@ class RandomConvTransformGPU(ImageOnlyTransform):
             raise NotImplementedError('Currently only "Laplace", "Scharr" and "GaussianBlur" are supported.')
         else:
             self.kernel_type = kernel_type
+        self.apply_to_channel = apply_to_channel
         self.absolute = kwargs.get('absolute', False)
         self.sigma = kwargs.get('sigma', 1.0)
 
@@ -97,16 +99,18 @@ class RandomConvTransformGPU(ImageOnlyTransform):
         kernel = self.get_kernel(device=input.device)
         
         # Apply convolution
-        if self.kernel_type in ['Laplace', 'GaussianBlur']:
-            tot_ = apply_convolution(input, kernel, dim=3)
-        elif self.kernel_type == 'Scharr':
-            tot_ = torch.zeros_like(input, device=input.device)
-            for k in kernel:
-                if self.absolute:
-                    tot_ += torch.abs(apply_convolution(input, k, dim=3))
-                else:
-                    tot_ += apply_convolution(input, k, dim=3)
-        return tot_
+        for c in self.apply_to_channel:
+            if self.kernel_type in ['Laplace', 'GaussianBlur']:
+                input[:, c] = apply_convolution(input[:, c], kernel, dim=3)
+            elif self.kernel_type == 'Scharr':
+                tot_ = torch.zeros_like(input[:, c], device=input.device)
+                for k in kernel:
+                    if self.absolute:
+                        tot_ += torch.abs(apply_convolution(input[:, c], k, dim=3))
+                    else:
+                        tot_ += apply_convolution(input[:, c], k, dim=3)
+                input[:, c] = tot_
+        return input
 
 def apply_convolution(img: torch.Tensor, kernel: torch.Tensor, dim: int) -> torch.Tensor:
     '''
@@ -191,12 +195,15 @@ class RandomGaussianNoiseGPU(ImageOnlyTransform):
         self,
         mean: float = 0.0,
         std: float = 0.1,
+        apply_to_channel: list[int] = [0],  # Apply to first channel by default
         same_on_batch: bool = False,
         p: float = 1.0,
         keepdim: bool = False,
         **kwargs,
     ) -> None:
         super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
+        self.same_on_batch = same_on_batch
+        self.apply_to_channel = apply_to_channel
         self.mean = mean
         self.std = std
 
@@ -205,6 +212,18 @@ class RandomGaussianNoiseGPU(ImageOnlyTransform):
         self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
     ) -> Tensor:
         # Generate Gaussian noise with the same shape as input
+        for c in self.apply_to_channel:
+            if self.same_on_batch:
+                std = torch.rand(1, device=input.device, dtype=input.dtype) * self.std
+                noise = torch.randn_like(input[:,c], device=input.device, dtype=input.dtype)
+            else:
+                std = torch.rand(input.shape[0], device=input.device, dtype=input.dtype) * self.std
+                noise = torch.randn_like(input[:,c], device=input.device, dtype=input.dtype)
+            noise = noise * std + self.mean
+            input[:, c] += noise
+
+        return input
+
 ## Multiplicative brightness transform
 class RandomBrightnessGPU(ImageOnlyTransform):
     """Apply random brightness adjustment to image.
