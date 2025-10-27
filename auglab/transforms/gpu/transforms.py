@@ -3,7 +3,7 @@ import os, json
 from kornia.augmentation import AugmentationSequential
 import torch.nn as nn
 
-from auglab.transforms.gpu.contrast import RandomConvTransformGPU, RandomGaussianNoiseGPU
+from auglab.transforms.gpu.contrast import RandomConvTransformGPU, RandomGaussianNoiseGPU, RandomBrightnessGPU
 from auglab.transforms.gpu.spatial import RandomAffine3DCustom
 from auglab.transforms.gpu.base import AugmentationSequentialCustom
 
@@ -47,6 +47,11 @@ class AugTransformsGPU(AugmentationSequentialCustom):
         ))
 
         # Brightness transforms
+        brightness_params = self.transform_params.get('BrightnessTransform')
+        transforms.append(RandomBrightnessGPU(
+            brightness_range=brightness_params['brightness_range'],
+            p=brightness_params['probability'],
+        ))
 
         # Contrast transforms
 

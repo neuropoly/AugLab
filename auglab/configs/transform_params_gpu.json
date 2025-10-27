@@ -14,6 +14,10 @@
         "std": 1.0,
         "probability": 0.9
     },
+    "BrightnessTransform": {
+        "brightness_range": [0.9, 1.1],
+        "probability": 0.9
+    },
     "AffineTransform": {
         "degrees": 10,
         "translate": [0.1, 0.1, 0.1],
