@@ -108,12 +108,15 @@ class RandomConvTransformGPU(ImageOnlyTransform):
         kernel = self.get_kernel(device=input.device)
 
         if self.retain_stats:
-            # Compute original mean and std for each channel to be processed
+            # Compute original mean and std for each channel to be processed (per-sample / per-image)
             orig_means = {}
             orig_stds = {}
             for c in self.apply_to_channel:
-                orig_means[c] = torch.mean(input[:, c])
-                orig_stds[c] = torch.std(input[:, c])
+                x = input[:, c]  # shape [N, ...spatial...]
+                reduce_dims = tuple(range(1, x.dim()))
+                # store per-sample mean/std (shape [N])
+                orig_means[c] = x.mean(dim=reduce_dims)
+                orig_stds[c] = x.std(dim=reduce_dims)
         
         # Apply convolution
         for c in self.apply_to_channel:
@@ -135,10 +138,19 @@ class RandomConvTransformGPU(ImageOnlyTransform):
         
         if self.retain_stats:
             # Adjust mean and std to match original
+            eps = 1e-8
             for c in self.apply_to_channel:
-                new_mean = torch.mean(input[:, c])
-                new_std = torch.std(input[:, c])
-                input[:, c] = (input[:, c] - new_mean) / (new_std + 1e-8) * orig_stds[c] + orig_means[c]
+                x = input[:, c]  # [N, ...]
+                reduce_dims = tuple(range(1, x.dim()))
+                new_mean = x.mean(dim=reduce_dims)  # [N]
+                new_std = x.std(dim=reduce_dims)    # [N]
+                # reshape stats to broadcast over spatial dims: [N,1,1,...]
+                shape = [x.shape[0]] + [1] * (x.dim() - 1)
+                nm = new_mean.view(shape)
+                ns = new_std.view(shape)
+                om = orig_means[c].view(shape)
+                os = orig_stds[c].view(shape)
+                input[:, c] = (x - nm) / (ns + eps) * os + om
         return input
 
 def apply_convolution(img: torch.Tensor, kernel: torch.Tensor, dim: int) -> torch.Tensor:
