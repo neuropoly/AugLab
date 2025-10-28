@@ -29,6 +29,7 @@ class RandomConvTransformGPU(ImageOnlyTransform):
         kernel_type: str = 'Laplace', 
         apply_to_channel: list[int] = [0],  # Apply to first channel by default
         same_on_batch: bool = False,
+        retain_stats: bool = False,
         p: float = 1.0,
         keepdim: bool = False,
         **kwargs,
@@ -41,6 +42,7 @@ class RandomConvTransformGPU(ImageOnlyTransform):
         self.apply_to_channel = apply_to_channel
         self.absolute = kwargs.get('absolute', False)
         self.sigma = kwargs.get('sigma', 1.0)
+        self.retain_stats = retain_stats
 
     def get_kernel(self, device: torch.device) -> torch.Tensor:
         if self.kernel_type == "Laplace":
@@ -97,6 +99,14 @@ class RandomConvTransformGPU(ImageOnlyTransform):
     ) -> Tensor:
         # Initialize kernel
         kernel = self.get_kernel(device=input.device)
+
+        if self.retain_stats:
+            # Compute original mean and std for each channel to be processed
+            orig_means = {}
+            orig_stds = {}
+            for c in self.apply_to_channel:
+                orig_means[c] = torch.mean(input[:, c])
+                orig_stds[c] = torch.std(input[:, c])
         
         # Apply convolution
         for c in self.apply_to_channel:
@@ -110,6 +120,13 @@ class RandomConvTransformGPU(ImageOnlyTransform):
                     else:
                         tot_ += apply_convolution(input[:, c], k, dim=3)
                 input[:, c] = tot_
+        
+        if self.retain_stats:
+            # Adjust mean and std to match original
+            for c in self.apply_to_channel:
+                new_mean = torch.mean(input[:, c])
+                new_std = torch.std(input[:, c])
+                input[:, c] = (input[:, c] - new_mean) / (new_std + 1e-8) * orig_stds[c] + orig_means[c]
         return input
 
 def apply_convolution(img: torch.Tensor, kernel: torch.Tensor, dim: int) -> torch.Tensor:
