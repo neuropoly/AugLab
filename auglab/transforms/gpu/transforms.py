@@ -39,6 +39,15 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             sigma=gaussianblur_params['sigma'],
         ))
 
+        # Unsharp masking
+        unsharp_params = self.transform_params.get('UnsharpMaskTransform')
+        transforms.append(RandomConvTransformGPU(
+            kernel_type=unsharp_params['kernel_type'],
+            p=unsharp_params['probability'],
+            sigma=unsharp_params['sigma'],
+            unsharp_amount=unsharp_params['unsharp_amount'],
+        ))
+
         # Noise transforms
         noise_params = self.transform_params.get('GaussianNoiseTransform')
         transforms.append(RandomGaussianNoiseGPU(

@@ -35,14 +35,16 @@ class RandomConvTransformGPU(ImageOnlyTransform):
         **kwargs,
     ) -> None:
         super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
-        if kernel_type not in  ["Laplace","Scharr","GaussianBlur"]:
-            raise NotImplementedError('Currently only "Laplace", "Scharr" and "GaussianBlur" are supported.')
+        if kernel_type not in ["Laplace", "Scharr", "GaussianBlur", "UnsharpMask"]:
+            raise NotImplementedError('Currently only "Laplace", "Scharr", "GaussianBlur" and "UnsharpMask" are supported.')
         else:
             self.kernel_type = kernel_type
         self.apply_to_channel = apply_to_channel
         self.absolute = kwargs.get('absolute', False)
         self.sigma = kwargs.get('sigma', 1.0)
         self.retain_stats = retain_stats
+        # Unsharp mask parameters: amount controls strength of the mask
+        self.unsharp_amount = kwargs.get('unsharp_amount', 1.0)
 
     def get_kernel(self, device: torch.device) -> torch.Tensor:
         if self.kernel_type == "Laplace":
@@ -89,8 +91,13 @@ class RandomConvTransformGPU(ImageOnlyTransform):
             sigma = torch.rand(3, device=device) * self.sigma
             kernel_size = 3
             kernel = get_gaussian_kernel3d(kernel_size, sigma, torch.float32, device)
+        elif self.kernel_type == "UnsharpMask":
+            # For unsharp masking we use a Gaussian blur kernel; amount is applied in apply_transform.
+            sigma = torch.rand(3, device=device) * self.sigma
+            kernel_size = 3
+            kernel = get_gaussian_kernel3d(kernel_size, sigma, torch.float32, device)
         else:
-            raise NotImplementedError('Currently only "Laplace" and "Scharr" are supported.')
+            raise NotImplementedError('Kernel type not implemented.')
         return kernel
     
     @torch.no_grad()  # disable gradients for efficiency
@@ -112,6 +119,11 @@ class RandomConvTransformGPU(ImageOnlyTransform):
         for c in self.apply_to_channel:
             if self.kernel_type in ['Laplace', 'GaussianBlur']:
                 input[:, c] = apply_convolution(input[:, c], kernel, dim=3)
+            elif self.kernel_type == 'UnsharpMask':
+                # blur selected channel, compute mask and add scaled mask back Isharp​=I+α(I−G​∗I)
+                blurred = apply_convolution(input[:, c], kernel, dim=3)
+                mask = input[:, c] - blurred
+                input[:, c] = input[:, c] + self.unsharp_amount * mask
             elif self.kernel_type == 'Scharr':
                 tot_ = torch.zeros_like(input[:, c], device=input.device)
                 for k in kernel:

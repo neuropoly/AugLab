@@ -10,13 +10,19 @@
         "sigma": 1.0,
         "probability": 0
     },
+    "UnsharpMaskTransform": {
+        "kernel_type": "UnsharpMask",
+        "sigma": 1.0,
+        "unsharp_amount": 1.5,
+        "probability": 0
+    },
     "GaussianNoiseTransform": {
         "mean": 0.0,
         "std": 1.0,
         "probability": 0
     },
     "BrightnessTransform": {
-        "brightness_range": [0.7, 1.3],
+        "brightness_range": [0.5, 1.5],
         "probability": 0
     },
     "AffineTransform": {
