@@ -86,7 +86,7 @@ class RandomConvTransformGPU(ImageOnlyTransform):
                                         [   -9,  -30,  -9]]], dtype=torch.float32, device=device)
             kernel = [kernel_x, kernel_y, kernel_z]
         elif self.kernel_type == "GaussianBlur":
-            sigma = torch.rand((1, 3), device=device) * self.sigma
+            sigma = torch.rand(3, device=device) * self.sigma
             kernel_size = 3
             kernel = get_gaussian_kernel3d(kernel_size, sigma, torch.float32, device)
         else:
@@ -166,7 +166,7 @@ def get_gaussian_kernel1d(kernel_size: int, sigma: float, dtype: torch.dtype, de
 
     return kernel1d
 
-def get_gaussian_kernel3d(kernel_size: int, sigma: float, dtype: torch.dtype, device: torch.device) -> Tensor:
+def get_gaussian_kernel3d(kernel_size: int, sigma: torch.Tensor, dtype: torch.dtype, device: torch.device) -> Tensor:
     """
     Create a 3D Gaussian kernel by multiplying 1D kernels along each axis.
     Args:
@@ -174,15 +174,15 @@ def get_gaussian_kernel3d(kernel_size: int, sigma: float, dtype: torch.dtype, de
         sigma (float or tuple of three floats): Standard deviation of the Gaussian kernel.
     """
     if isinstance(sigma, (int, float)):
-        sigma = (sigma, sigma, sigma)
-    elif isinstance(sigma, (list, tuple)):
-        assert len(sigma) == 3, "Sigma must be a float or a tuple of three floats."
+        sigma = torch.tensor([sigma, sigma, sigma], device=device)
+    elif isinstance(sigma, torch.Tensor):
+        assert sigma.shape == (3,), "Sigma must be a float or a tensor of three floats."
     else:
-        raise TypeError("Sigma must be a float or a tuple of three floats.")
-    
-    gz = get_gaussian_kernel1d(kernel_size, sigma[0], device, dtype)
-    gy = get_gaussian_kernel1d(kernel_size, sigma[1], device, dtype)
-    gx = get_gaussian_kernel1d(kernel_size, sigma[2], device, dtype)
+        raise TypeError("Sigma must be a float or a tensor of three floats.")
+
+    gz = get_gaussian_kernel1d(kernel_size, sigma[0], dtype, device)
+    gy = get_gaussian_kernel1d(kernel_size, sigma[1], dtype, device)
+    gx = get_gaussian_kernel1d(kernel_size, sigma[2], dtype, device)
 
     # Outer product using broadcasting
     kernel = gz[:, None, None] * gy[None, :, None] * gx[None, None, :]
