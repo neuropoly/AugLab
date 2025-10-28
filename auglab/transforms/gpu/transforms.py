@@ -27,6 +27,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
         transforms.append(RandomConvTransformGPU(
             kernel_type=scharr_params['kernel_type'],
             p=scharr_params['probability'],
+            retain_stats=scharr_params['retain_stats'],
             absolute=scharr_params['absolute'],
         ))
 
