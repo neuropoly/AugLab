@@ -3,7 +3,7 @@ import os, json
 from kornia.augmentation import AugmentationSequential
 import torch.nn as nn
 
-from auglab.transforms.gpu.contrast import RandomConvTransformGPU, RandomGaussianNoiseGPU, RandomBrightnessGPU
+from auglab.transforms.gpu.contrast import RandomConvTransformGPU, RandomGaussianNoiseGPU, RandomBrightnessGPU, RandomGammaGPU
 from auglab.transforms.gpu.spatial import RandomAffine3DCustom
 from auglab.transforms.gpu.base import AugmentationSequentialCustom
 
@@ -61,11 +61,16 @@ class AugTransformsGPU(AugmentationSequentialCustom):
         transforms.append(RandomBrightnessGPU(
             brightness_range=brightness_params['brightness_range'],
             p=brightness_params['probability'],
-        ))
-
-        # Contrast transforms
+        ))        
 
         # Gamma transforms
+        gamma_params = self.transform_params.get('GammaTransform')
+        transforms.append(RandomGammaGPU(
+            gamma_range=gamma_params['gamma_range'],
+            p=gamma_params['probability'],
+            invert_image=False,
+            retain_stats=gamma_params['retain_stats'],
+        ))
 
         # Apply functions
 
@@ -123,6 +128,10 @@ if __name__ == "__main__":
     img_tensor = torch.cat([img_tensor, seg_tensor_all.bool().int()], dim=0).unsqueeze(0)  # Add batch dimension and seconda channel
     seg_tensor = seg_tensor.unsqueeze(0)  # Add batch dimension
 
+    # Add same image in batch 
+    img_tensor = torch.cat([img_tensor, img_tensor], dim=0)
+    seg_tensor = torch.cat([seg_tensor, seg_tensor], dim=0)
+
     # Move to GPU
     img_tensor = img_tensor.cuda()
     seg_tensor = seg_tensor.cuda()
@@ -152,6 +161,7 @@ if __name__ == "__main__":
     middle_slice = img_tensor_np.shape[2] // 2
     os.makedirs('img', exist_ok=True)
     cv2.imwrite('img/augmented_img.png', augmented_img_np[0, 0, middle_slice])
+    cv2.imwrite('img/augmented_img2.png', augmented_img_np[1, 0, middle_slice])
     cv2.imwrite('img/not_augmented_channel.png', augmented_img_np[0, 1, middle_slice]*255)
     cv2.imwrite('img/img.png', img_tensor_np[0, 0, middle_slice])
     cv2.imwrite('img/augmented_seg.png', augmented_seg_np[0, middle_slice]*255)

@@ -25,11 +25,16 @@
         "brightness_range": [0.5, 1.5],
         "probability": 0
     },
+    "GammaTransform": {
+        "gamma_range": [0.5, 1.5],
+        "probability": 1,
+        "retain_stats": true
+    },
     "AffineTransform": {
         "degrees": 10,
         "translate": [0.1, 0.1, 0.1],
         "scale": [0.9, 1.1],
         "shear": [-10, 10, -10, 10, -10, 10],
-        "probability": 1.0
+        "probability": 0
     }
 }

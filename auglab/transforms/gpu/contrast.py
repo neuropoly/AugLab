@@ -307,3 +307,107 @@ class RandomBrightnessGPU(ImageOnlyTransform):
                 factor = torch.rand(input.shape[0], device=input.device, dtype=input.dtype) * (self.brightness_range[1] - self.brightness_range[0]) + self.brightness_range[0]
             input[:, c] *= factor
         return input
+
+
+## Gamma transform
+class RandomGammaGPU(ImageOnlyTransform):
+    """Apply random gamma adjustment to image.
+    If the image is torch Tensor, it is expected to have [N, C, X, Y] or [N, C, X, Y, Z] shape.
+
+    Args:
+        gamma_range (tuple of float): Range of gamma multipliers. Default is (0.9, 1.1).
+        apply_to_channel (list of int): List of channel indices to apply the gamma adjustment to. Default is [0].
+        same_on_batch (bool): Apply the same transformation across the batch. Default is False.
+        p (float): Probability of applying the transform. Default is 1.0.
+        keepdim (bool): Whether to keep the number of dimensions. Default is False.
+
+    Returns:
+        Tensor: Image with adjusted brightness.
+    """
+    
+    def __init__(
+        self,
+        gamma_range: list[float, float] = (0.9, 1.1),
+        invert_image: bool = False,
+        apply_to_channel: list[int] = [0],  # Apply to first channel by default
+        retain_stats: bool = False,
+        same_on_batch: bool = False,
+        p: float = 1.0,
+        keepdim: bool = False,
+        **kwargs,
+    ) -> None:
+        super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
+        self.gamma_range = gamma_range
+        self.invert_image = invert_image
+        self.retain_stats = retain_stats
+        self.same_on_batch_range = same_on_batch
+        self.apply_to_channel = apply_to_channel
+
+    @torch.no_grad()  # disable gradients for efficiency
+    def apply_transform(
+        self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
+    ) -> Tensor:
+        
+        if self.invert_image:
+            input = -input
+
+        if self.retain_stats:
+            # Compute original mean and std for each channel to be processed (per-sample / per-image)
+            orig_means = {}
+            orig_stds = {}
+            for c in self.apply_to_channel:
+                x = input[:, c]  # shape [N, ...spatial...]
+                reduce_dims = tuple(range(1, x.dim()))
+                # store per-sample mean/std (shape [N])
+                orig_means[c] = x.mean(dim=reduce_dims)
+                orig_stds[c] = x.std(dim=reduce_dims)
+        
+        # Apply gamma transform
+        for c in self.apply_to_channel:
+            if self.same_on_batch:
+                gamma = torch.rand(1, device=input.device, dtype=input.dtype) * (self.gamma_range[1] - self.gamma_range[0]) + self.gamma_range[0]
+            else:
+                gamma = torch.rand(input.shape[0], device=input.device, dtype=input.dtype) * (self.gamma_range[1] - self.gamma_range[0]) + self.gamma_range[0]
+            
+            # Compute min and range per batch element for the current channel
+            channel_data = input[:, c]  # [N, ...spatial...]
+            # Flatten spatial dimensions to compute min/max per batch element
+            batch_size = channel_data.shape[0]
+            flat_data = channel_data.view(batch_size, -1)  # [N, spatial_flattened]
+            minm = flat_data.min(dim=1, keepdim=True)[0]  # [N, 1]
+            maxm = flat_data.max(dim=1, keepdim=True)[0]  # [N, 1]
+            rnge = maxm - minm
+            
+            # Reshape min, max, range to broadcast over spatial dims: [N, 1] -> [N, 1, 1, ...]
+            reshape_dims = [batch_size] + [1] * (channel_data.dim() - 1)
+            minm = minm.view(reshape_dims)
+            rnge = rnge.view(reshape_dims)
+            
+            # Reshape gamma to broadcast properly: [N] -> [N, 1, 1, ...]
+            if not self.same_on_batch:
+                gamma = gamma.view(reshape_dims)
+            
+            # Apply gamma transform per batch element
+            input[:, c] = torch.pow(((channel_data - minm) / (rnge + 1e-8)), gamma) * rnge + minm
+
+        if self.retain_stats:
+            # Adjust mean and std to match original
+            eps = 1e-8
+            for c in self.apply_to_channel:
+                x = input[:, c]  # [N, ...]
+                reduce_dims = tuple(range(1, x.dim()))
+                new_mean = x.mean(dim=reduce_dims)  # [N]
+                new_std = x.std(dim=reduce_dims)    # [N]
+                # reshape stats to broadcast over spatial dims: [N,1,1,...]
+                shape = [x.shape[0]] + [1] * (x.dim() - 1)
+                nm = new_mean.view(shape)
+                ns = new_std.view(shape)
+                om = orig_means[c].view(shape)
+                os = orig_stds[c].view(shape)
+                input[:, c] = (x - nm) / (ns + eps) * os + om
+
+        if self.invert_image:
+            input = -input
+
+        return input
+
