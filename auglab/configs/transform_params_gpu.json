@@ -7,7 +7,7 @@
     },
     "GaussianBlurTransform": {
         "kernel_type": "GaussianBlur",
-        "sigma": 1.0,
+        "sigma": 2.0,
         "probability": 0
     },
     "UnsharpMaskTransform": {
