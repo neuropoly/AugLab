@@ -4,7 +4,8 @@ from kornia.augmentation import AugmentationSequential
 import torch.nn as nn
 import torch
 
-from auglab.transforms.gpu.contrast import RandomConvTransformGPU, RandomGaussianNoiseGPU, RandomBrightnessGPU, RandomGammaGPU, RandomFunctionGPU
+from auglab.transforms.gpu.contrast import RandomConvTransformGPU, RandomGaussianNoiseGPU, RandomBrightnessGPU, RandomGammaGPU, RandomFunctionGPU, \
+RandomHistogramEqualizationGPU
 from auglab.transforms.gpu.spatial import RandomAffine3DCustom
 from auglab.transforms.gpu.base import AugmentationSequentialCustom
 
@@ -82,14 +83,19 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             lambda x: 1/(1 + torch.exp(-x)),
         ]
         function_params = self.transform_params.get('FunctionTransform')
-        for function in func_list:
+        for func in func_list:
             transforms.append(RandomFunctionGPU(
-                function=function,
+                func=func,
                 p=function_params['probability'],
                 retain_stats=function_params['retain_stats'],
             ))
 
         # Histogram manipulations
+        histo_params = self.transform_params.get('HistogramEqualizationTransform')
+        transforms.append(RandomHistogramEqualizationGPU(
+            p=histo_params['probability'],
+            retain_stats=histo_params['retain_stats'],
+        ))
 
         # Redistribute segmentation values
 

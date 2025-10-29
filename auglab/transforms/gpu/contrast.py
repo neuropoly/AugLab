@@ -476,3 +476,92 @@ class RandomFunctionGPU(ImageOnlyTransform):
         
         return input
 
+## Histogram transform
+class RandomHistogramEqualizationGPU(ImageOnlyTransform):
+    """Apply histogram equalization transformation to the image based on probability.
+    If the image is torch Tensor, it is expected to have [N, C, X, Y] or [N, C, X, Y, Z] shape.
+
+    Args:
+        apply_to_channel (list of int): List of channel indices to apply the histogram equalization to. Default is [0].
+        retain_stats (bool): If True, retain the original mean and standard deviation of the image after histogram equalization. Default is False.
+        same_on_batch (bool): Apply the same transformation across the batch. Default is False.
+        p (float): Probability of applying the transform. Default is 1.0.
+        keepdim (bool): Whether to keep the number of dimensions. Default is False.
+
+    Returns:
+        Tensor: Image with adjusted brightness.
+    """
+    
+    def __init__(
+        self,
+        apply_to_channel: list[int] = [0],  # Apply to first channel by default
+        retain_stats: bool = False,
+        same_on_batch: bool = False,
+        p: float = 1.0,
+        keepdim: bool = False,
+        **kwargs,
+    ) -> None:
+        super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
+        self.retain_stats = retain_stats
+        self.same_on_batch_range = same_on_batch
+        self.apply_to_channel = apply_to_channel
+
+    @torch.no_grad()  # disable gradients for efficiency
+    def apply_transform(
+        self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
+    ) -> Tensor:
+
+        # Apply histogram equalization transform
+        for c in self.apply_to_channel:
+            channel_data = input[:, c]  # shape [N, ...spatial...]
+            
+            if self.retain_stats:
+                reduce_dims = tuple(range(1, channel_data.dim()))
+                # store per-sample mean/std (shape [N])
+                orig_means = channel_data.mean(dim=reduce_dims)
+                orig_stds = channel_data.std(dim=reduce_dims)
+            
+            # Process each batch element independently
+            batch_size = channel_data.shape[0]
+            for b in range(batch_size):
+                img_b = channel_data[b]  # Single image from batch [...spatial...]
+                
+                img_min, img_max = img_b.min(), img_b.max()
+                
+                # Flatten the image and compute the histogram
+                img_flattened = img_b.flatten().to(torch.float32)
+                hist = torch.histc(img_flattened, bins=256, min=img_min.item(), max=img_max.item())
+                
+                # Compute the normalized cumulative distribution function (CDF)
+                cdf = hist.cumsum(dim=0)
+                cdf_min = cdf[cdf > 0].min() if (cdf > 0).any() else cdf.min()
+                cdf = (cdf - cdf_min) / (cdf[-1] - cdf_min + 1e-10)  # Normalize to [0,1]
+                cdf = cdf * (img_max - img_min) + img_min  # Scale back to image range
+                
+                # Compute bin edges and indices
+                bin_width = (img_max - img_min) / 256
+                indices = ((img_flattened - img_min) / (bin_width + 1e-10)).long()
+                indices = torch.clamp(indices, 0, 255)
+                
+                # Perform histogram equalization
+                img_eq = cdf[indices]
+                channel_data[b] = img_eq.reshape(img_b.shape)
+            
+            if self.retain_stats:
+                # Adjust mean and std to match original
+                eps = 1e-8
+                reduce_dims = tuple(range(1, channel_data.dim()))
+                new_mean = channel_data.mean(dim=reduce_dims)  # [N]
+                new_std = channel_data.std(dim=reduce_dims)    # [N]
+                # reshape stats to broadcast over spatial dims: [N,1,1,...]
+                shape = [channel_data.shape[0]] + [1] * (channel_data.dim() - 1)
+                nm = new_mean.view(shape)
+                ns = new_std.view(shape)
+                om = orig_means.view(shape)
+                os = orig_stds.view(shape)
+                input[:, c] = (channel_data - nm) / (ns + eps) * os + om
+            else:
+                input[:, c] = channel_data
+        
+        return input
+
