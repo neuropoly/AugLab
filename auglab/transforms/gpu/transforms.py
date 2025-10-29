@@ -2,8 +2,9 @@ import os, json
 
 from kornia.augmentation import AugmentationSequential
 import torch.nn as nn
+import torch
 
-from auglab.transforms.gpu.contrast import RandomConvTransformGPU, RandomGaussianNoiseGPU, RandomBrightnessGPU, RandomGammaGPU
+from auglab.transforms.gpu.contrast import RandomConvTransformGPU, RandomGaussianNoiseGPU, RandomBrightnessGPU, RandomGammaGPU, RandomFunctionGPU
 from auglab.transforms.gpu.spatial import RandomAffine3DCustom
 from auglab.transforms.gpu.base import AugmentationSequentialCustom
 
@@ -73,6 +74,20 @@ class AugTransformsGPU(AugmentationSequentialCustom):
         ))
 
         # Apply functions
+        func_list = [
+            lambda x: torch.log(1 + x),
+            torch.sqrt,
+            torch.sin,
+            torch.exp,
+            lambda x: 1/(1 + torch.exp(-x)),
+        ]
+        function_params = self.transform_params.get('FunctionTransform')
+        for function in func_list:
+            transforms.append(RandomFunctionGPU(
+                function=function,
+                p=function_params['probability'],
+                retain_stats=function_params['retain_stats'],
+            ))
 
         # Histogram manipulations
 
@@ -110,7 +125,6 @@ if __name__ == "__main__":
     augmentor = AugTransformsGPU(json_path)
 
     # Load image and mask tensors
-    import torch
     img_path = '/home/GRAMES.POLYMTL.CA/p118739/data_nvme_p118739/data/datasets/data-multi-subject/sub-amu02/anat/sub-amu02_T1w.nii.gz'
     img = Image(img_path).change_orientation('RSP')
     img_tensor = torch.from_numpy(img.data.copy()).unsqueeze(0).to(torch.float32)

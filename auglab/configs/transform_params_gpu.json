@@ -27,6 +27,10 @@
     },
     "GammaTransform": {
         "gamma_range": [0.5, 1.5],
+        "probability": 0,
+        "retain_stats": true
+    },
+    "FunctionTransform": {
         "probability": 1,
         "retain_stats": true
     },

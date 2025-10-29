@@ -271,7 +271,7 @@ class RandomBrightnessGPU(ImageOnlyTransform):
     If the image is torch Tensor, it is expected to have [N, C, X, Y] or [N, C, X, Y, Z] shape.
 
     Args:
-        multiplier_range (tuple of float): Range of brightness multipliers. Default is (0.9, 1.1).
+        brightness_range (tuple of float): Range of brightness multipliers. Default is (0.9, 1.1).
         apply_to_channel (list of int): List of channel indices to apply the brightness adjustment to. Default is [0].
         same_on_batch (bool): Apply the same transformation across the batch. Default is False.
         p (float): Probability of applying the transform. Default is 1.0.
@@ -308,7 +308,6 @@ class RandomBrightnessGPU(ImageOnlyTransform):
             input[:, c] *= factor
         return input
 
-
 ## Gamma transform
 class RandomGammaGPU(ImageOnlyTransform):
     """Apply random gamma adjustment to image.
@@ -316,7 +315,9 @@ class RandomGammaGPU(ImageOnlyTransform):
 
     Args:
         gamma_range (tuple of float): Range of gamma multipliers. Default is (0.9, 1.1).
+        invert_image (bool): If True, invert the image before and after gamma adjustment. Default is False.
         apply_to_channel (list of int): List of channel indices to apply the gamma adjustment to. Default is [0].
+        retain_stats (bool): If True, retain the original mean and standard deviation of the image after gamma adjustment. Default is False.
         same_on_batch (bool): Apply the same transformation across the batch. Default is False.
         p (float): Probability of applying the transform. Default is 1.0.
         keepdim (bool): Whether to keep the number of dimensions. Default is False.
@@ -409,5 +410,76 @@ class RandomGammaGPU(ImageOnlyTransform):
         if self.invert_image:
             input = -input
 
+        return input
+
+## Function transform
+class RandomFunctionGPU(ImageOnlyTransform):
+    """Apply function to the image based on probability.
+    If the image is torch Tensor, it is expected to have [N, C, X, Y] or [N, C, X, Y, Z] shape.
+
+    Args:
+        function (function): Random function to apply. Default is a gamma adjustment function.
+        apply_to_channel (list of int): List of channel indices to apply the gamma adjustment to. Default is [0].
+        retain_stats (bool): If True, retain the original mean and standard deviation of the image after gamma adjustment. Default is False.
+        same_on_batch (bool): Apply the same transformation across the batch. Default is False.
+        p (float): Probability of applying the transform. Default is 1.0.
+        keepdim (bool): Whether to keep the number of dimensions. Default is False.
+
+    Returns:
+        Tensor: Image with adjusted brightness.
+    """
+    
+    def __init__(
+        self,
+        function: callable = lambda x: x ** 2,
+        apply_to_channel: list[int] = [0],  # Apply to first channel by default
+        retain_stats: bool = False,
+        same_on_batch: bool = False,
+        p: float = 1.0,
+        keepdim: bool = False,
+        **kwargs,
+    ) -> None:
+        super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
+        self.function = function
+        self.retain_stats = retain_stats
+        self.same_on_batch_range = same_on_batch
+        self.apply_to_channel = apply_to_channel
+
+    @torch.no_grad()  # disable gradients for efficiency
+    def apply_transform(
+        self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
+    ) -> Tensor:
+
+        # Apply function transform
+        for c in self.apply_to_channel:
+            x = input[:, c]  # shape [N, ...spatial...]
+            if self.retain_stats:
+                reduce_dims = tuple(range(1, x.dim()))
+                # store per-sample mean/std (shape [N])
+                orig_means = x.mean(dim=reduce_dims)
+                orig_stds = x.std(dim=reduce_dims)
+            
+            # Normalize to make values >=0
+            x = (x - x.min()) / (x.max() - x.min() + 0.00001)
+
+            # Apply function
+            x = self.function(x)
+
+            if self.retain_stats:
+                # Adjust mean and std to match original
+                eps = 1e-8
+                reduce_dims = tuple(range(1, x.dim()))
+                new_mean = x.mean(dim=reduce_dims)  # [N]
+                new_std = x.std(dim=reduce_dims)    # [N]
+                # reshape stats to broadcast over spatial dims: [N,1,1,...]
+                shape = [x.shape[0]] + [1] * (x.dim() - 1)
+                nm = new_mean.view(shape)
+                ns = new_std.view(shape)
+                om = orig_means.view(shape)
+                os = orig_stds.view(shape)
+                input[:, c] = (x - nm) / (ns + eps) * os + om
+            else:
+                input[:, c] = x
+        
         return input
 
