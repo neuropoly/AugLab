@@ -411,8 +411,8 @@ class RandomFunctionGPU(ImageOnlyTransform):
     If the image is torch Tensor, it is expected to have [N, C, X, Y] or [N, C, X, Y, Z] shape.
 
     Args:
-        function (function): Random function to apply. Default is a gamma adjustment function.
-        apply_to_channel (list of int): List of channel indices to apply the gamma adjustment to. Default is [0].
+        func (callable): Random function to apply. Default is a gamma adjustment function.
+        apply_to_channel (list of int): List of channel indices to apply the function to. Default is [0].
         retain_stats (bool): If True, retain the original mean and standard deviation of the image after gamma adjustment. Default is False.
         same_on_batch (bool): Apply the same transformation across the batch. Default is False.
         p (float): Probability of applying the transform. Default is 1.0.
@@ -424,7 +424,7 @@ class RandomFunctionGPU(ImageOnlyTransform):
     
     def __init__(
         self,
-        function: callable = lambda x: x ** 2,
+        func: callable = lambda x: x ** 2,
         apply_to_channel: list[int] = [0],  # Apply to first channel by default
         retain_stats: bool = False,
         same_on_batch: bool = False,
@@ -433,7 +433,7 @@ class RandomFunctionGPU(ImageOnlyTransform):
         **kwargs,
     ) -> None:
         super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
-        self.function = function
+        self.func = func
         self.retain_stats = retain_stats
         self.same_on_batch_range = same_on_batch
         self.apply_to_channel = apply_to_channel
@@ -456,7 +456,7 @@ class RandomFunctionGPU(ImageOnlyTransform):
             x = (x - x.min()) / (x.max() - x.min() + 0.00001)
 
             # Apply function
-            x = self.function(x)
+            x = self.func(x)
 
             if self.retain_stats:
                 # Adjust mean and std to match original
