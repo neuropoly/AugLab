@@ -107,40 +107,36 @@ class RandomConvTransformGPU(ImageOnlyTransform):
         # Initialize kernel
         kernel = self.get_kernel(device=input.device)
 
-        if self.retain_stats:
-            # Compute original mean and std for each channel to be processed (per-sample / per-image)
-            orig_means = {}
-            orig_stds = {}
-            for c in self.apply_to_channel:
-                x = input[:, c]  # shape [N, ...spatial...]
-                reduce_dims = tuple(range(1, x.dim()))
-                # store per-sample mean/std (shape [N])
-                orig_means[c] = x.mean(dim=reduce_dims)
-                orig_stds[c] = x.std(dim=reduce_dims)
-        
         # Apply convolution
         for c in self.apply_to_channel:
+            channel_data = input[:, c]  # [N, ...spatial...]
+            
+            if self.retain_stats:
+                reduce_dims = tuple(range(1, channel_data.dim()))
+                # store per-sample mean/std (shape [N])
+                orig_means = channel_data.mean(dim=reduce_dims)
+                orig_stds = channel_data.std(dim=reduce_dims)
+            
             if self.kernel_type in ['Laplace', 'GaussianBlur']:
-                input[:, c] = apply_convolution(input[:, c], kernel, dim=3)
+                input[:, c] = apply_convolution(channel_data, kernel, dim=3)
             elif self.kernel_type == 'UnsharpMask':
                 # blur selected channel, compute mask and add scaled mask back Isharp​=I+α(I−G​∗I)
-                blurred = apply_convolution(input[:, c], kernel, dim=3)
-                mask = input[:, c] - blurred
-                input[:, c] = input[:, c] + self.unsharp_amount * mask
+                blurred = apply_convolution(channel_data, kernel, dim=3)
+                mask = channel_data - blurred
+                input[:, c] = channel_data + self.unsharp_amount * mask
             elif self.kernel_type == 'Scharr':
-                tot_ = torch.zeros_like(input[:, c], device=input.device)
+                tot_ = torch.zeros_like(channel_data, device=input.device)
                 for k in kernel:
                     if self.absolute:
-                        tot_ += torch.abs(apply_convolution(input[:, c], k, dim=3))
+                        tot_ += torch.abs(apply_convolution(channel_data, k, dim=3))
                     else:
-                        tot_ += apply_convolution(input[:, c], k, dim=3)
+                        tot_ += apply_convolution(channel_data, k, dim=3)
                 input[:, c] = tot_
-        
-        if self.retain_stats:
-            # Adjust mean and std to match original
-            eps = 1e-8
-            for c in self.apply_to_channel:
-                x = input[:, c]  # [N, ...]
+            
+            if self.retain_stats:
+                # Adjust mean and std to match original
+                eps = 1e-8
+                x = input[:, c]
                 reduce_dims = tuple(range(1, x.dim()))
                 new_mean = x.mean(dim=reduce_dims)  # [N]
                 new_std = x.std(dim=reduce_dims)    # [N]
@@ -148,9 +144,10 @@ class RandomConvTransformGPU(ImageOnlyTransform):
                 shape = [x.shape[0]] + [1] * (x.dim() - 1)
                 nm = new_mean.view(shape)
                 ns = new_std.view(shape)
-                om = orig_means[c].view(shape)
-                os = orig_stds[c].view(shape)
+                om = orig_means.view(shape)
+                os = orig_stds.view(shape)
                 input[:, c] = (x - nm) / (ns + eps) * os + om
+        
         return input
 
 def apply_convolution(img: torch.Tensor, kernel: torch.Tensor, dim: int) -> torch.Tensor:
@@ -348,30 +345,26 @@ class RandomGammaGPU(ImageOnlyTransform):
     def apply_transform(
         self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
     ) -> Tensor:
-        
-        if self.invert_image:
-            input = -input
 
-        if self.retain_stats:
-            # Compute original mean and std for each channel to be processed (per-sample / per-image)
-            orig_means = {}
-            orig_stds = {}
-            for c in self.apply_to_channel:
-                x = input[:, c]  # shape [N, ...spatial...]
-                reduce_dims = tuple(range(1, x.dim()))
-                # store per-sample mean/std (shape [N])
-                orig_means[c] = x.mean(dim=reduce_dims)
-                orig_stds[c] = x.std(dim=reduce_dims)
-        
         # Apply gamma transform
         for c in self.apply_to_channel:
+            if self.invert_image:
+                channel_data = -input[:, c]  # [N, ...spatial...]
+            else:
+                channel_data = input[:, c]  # [N, ...spatial...]
+            
+            if self.retain_stats:
+                reduce_dims = tuple(range(1, channel_data.dim()))
+                # store per-sample mean/std (shape [N])
+                orig_means = channel_data.mean(dim=reduce_dims)
+                orig_stds = channel_data.std(dim=reduce_dims)
+            
             if self.same_on_batch:
                 gamma = torch.rand(1, device=input.device, dtype=input.dtype) * (self.gamma_range[1] - self.gamma_range[0]) + self.gamma_range[0]
             else:
                 gamma = torch.rand(input.shape[0], device=input.device, dtype=input.dtype) * (self.gamma_range[1] - self.gamma_range[0]) + self.gamma_range[0]
             
             # Compute min and range per batch element for the current channel
-            channel_data = input[:, c]  # [N, ...spatial...]
             # Flatten spatial dimensions to compute min/max per batch element
             batch_size = channel_data.shape[0]
             flat_data = channel_data.view(batch_size, -1)  # [N, spatial_flattened]
@@ -389,26 +382,26 @@ class RandomGammaGPU(ImageOnlyTransform):
                 gamma = gamma.view(reshape_dims)
             
             # Apply gamma transform per batch element
-            input[:, c] = torch.pow(((channel_data - minm) / (rnge + 1e-8)), gamma) * rnge + minm
-
-        if self.retain_stats:
-            # Adjust mean and std to match original
-            eps = 1e-8
-            for c in self.apply_to_channel:
-                x = input[:, c]  # [N, ...]
-                reduce_dims = tuple(range(1, x.dim()))
-                new_mean = x.mean(dim=reduce_dims)  # [N]
-                new_std = x.std(dim=reduce_dims)    # [N]
+            channel_data = torch.pow(((channel_data - minm) / (rnge + 1e-8)), gamma) * rnge + minm
+            
+            if self.retain_stats:
+                # Adjust mean and std to match original
+                eps = 1e-8
+                reduce_dims = tuple(range(1, channel_data.dim()))
+                new_mean = channel_data.mean(dim=reduce_dims)  # [N]
+                new_std = channel_data.std(dim=reduce_dims)    # [N]
                 # reshape stats to broadcast over spatial dims: [N,1,1,...]
-                shape = [x.shape[0]] + [1] * (x.dim() - 1)
+                shape = [channel_data.shape[0]] + [1] * (channel_data.dim() - 1)
                 nm = new_mean.view(shape)
                 ns = new_std.view(shape)
-                om = orig_means[c].view(shape)
-                os = orig_stds[c].view(shape)
-                input[:, c] = (x - nm) / (ns + eps) * os + om
-
-        if self.invert_image:
-            input = -input
+                om = orig_means.view(shape)
+                os = orig_stds.view(shape)
+                input[:, c] = (channel_data - nm) / (ns + eps) * os + om
+            else:
+                input[:, c] = channel_data
+            
+            if self.invert_image:
+                input[:, c] = -input[:, c]
 
         return input
 
