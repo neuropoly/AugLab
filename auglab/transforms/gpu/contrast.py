@@ -240,7 +240,6 @@ class RandomGaussianNoiseGPU(ImageOnlyTransform):
         **kwargs,
     ) -> None:
         super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
-        self.same_on_batch = same_on_batch
         self.apply_to_channel = apply_to_channel
         self.mean = mean
         self.std = std
@@ -338,7 +337,6 @@ class RandomGammaGPU(ImageOnlyTransform):
         self.gamma_range = gamma_range
         self.invert_image = invert_image
         self.retain_stats = retain_stats
-        self.same_on_batch_range = same_on_batch
         self.apply_to_channel = apply_to_channel
 
     @torch.no_grad()  # disable gradients for efficiency
@@ -435,7 +433,6 @@ class RandomFunctionGPU(ImageOnlyTransform):
         super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
         self.func = func
         self.retain_stats = retain_stats
-        self.same_on_batch_range = same_on_batch
         self.apply_to_channel = apply_to_channel
 
     @torch.no_grad()  # disable gradients for efficiency
@@ -503,7 +500,6 @@ class RandomHistogramEqualizationGPU(ImageOnlyTransform):
     ) -> None:
         super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
         self.retain_stats = retain_stats
-        self.same_on_batch_range = same_on_batch
         self.apply_to_channel = apply_to_channel
 
     @torch.no_grad()  # disable gradients for efficiency
