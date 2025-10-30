@@ -6,7 +6,7 @@ import torch
 
 from auglab.transforms.gpu.contrast import RandomConvTransformGPU, RandomGaussianNoiseGPU, RandomBrightnessGPU, RandomGammaGPU, RandomFunctionGPU, \
 RandomHistogramEqualizationGPU
-from auglab.transforms.gpu.spatial import RandomAffine3DCustom
+from auglab.transforms.gpu.spatial import RandomAffine3DCustom, RandomLowResTransform
 from auglab.transforms.gpu.base import AugmentationSequentialCustom
 
 class AugTransformsGPU(AugmentationSequentialCustom):
@@ -74,6 +74,15 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             retain_stats=gamma_params['retain_stats'],
         ))
 
+        # Gamma transforms
+        gamma_params = self.transform_params.get('GammaTransform')
+        transforms.append(RandomGammaGPU(
+            gamma_range=gamma_params['gamma_range'],
+            p=gamma_params['probability'],
+            invert_image=True,
+            retain_stats=gamma_params['retain_stats'],
+        ))
+
         # Apply functions
         func_list = [
             lambda x: torch.log(1 + x),
@@ -97,9 +106,16 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             retain_stats=histo_params['retain_stats'],
         ))
 
-        # Redistribute segmentation values
+        # Redistribute segmentation values (Not implemented on GPU yet)
 
-        # Resolution transforms
+        # Shape transforms (Simulate low resolution)
+        shape_params = self.transform_params.get('ShapeTransform')
+        transforms.append(RandomLowResTransform(
+            p=shape_params.get('probability'),
+            scale=shape_params.get('scale'),
+            crop=shape_params.get('crop'),
+            same_on_batch=shape_params.get('same_on_batch')
+        ))
 
         # Simulate low resolution
 

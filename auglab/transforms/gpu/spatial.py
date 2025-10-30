@@ -3,10 +3,15 @@ from kornia.core import Tensor
 from kornia.augmentation._3d.base import RigidAffineAugmentationBase3D
 from kornia.augmentation import random_generator as rg
 from kornia.geometry import deg2rad, get_affine_matrix3d, warp_affine3d
+from kornia.augmentation.random_generator.base import RandomGeneratorBase, UniformDistribution
+from kornia.augmentation.utils import _adapted_rsampling, _tuple_range_reader
+from kornia.utils.helpers import _extract_device_dtype
+import torch
+import torch.nn.functional as F
 
 from typing import Any, Dict, Optional, Tuple, Union
 
-
+# Affine transform
 class RandomAffine3DCustom(RigidAffineAugmentationBase3D):
     r"""Apply affine transformation 3D volumes (5D tensor).
 
@@ -179,3 +184,183 @@ class RandomAffine3DCustom(RigidAffineAugmentationBase3D):
         if resample_method is not None:
             flags["resample"] = resample_method
         return output
+
+# Low resolution transform
+class RandomLowResTransform(RigidAffineAugmentationBase3D):
+    """
+    Apply low resolution simulation to 3D volumes (5D tensor).
+    """
+
+    def __init__(
+        self,
+        scale: Tuple[float, float] = (0.3, 1.0),
+        crop: Tuple[float, float] = (0.0, 0.0),
+        same_on_batch: bool = False,
+        resample: Union[str, int, Resample] = Resample.BILINEAR.name,
+        p: float = 1.0,
+        keepdim: bool = False,
+        **kwargs,
+    ) -> None:
+        super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
+        self.flags = {"resample": "nearest"} # Use nearest neighbour for now because changing the resampling method for each channel is tricky 
+        self._param_generator = ShapeGenerator3D(
+            scale=scale,
+            crop=crop
+        )
+    
+    def compute_transformation(self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any]) -> Tensor:
+        return self.identity_matrix(input)
+
+    @torch.no_grad()
+    def apply_transform(
+        self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
+    ) -> Tensor:
+        # input shape: (B, C, D, H, W)
+        if not isinstance(input, torch.Tensor):
+            raise TypeError(f"Expected input to be a Tensor. Got {type(input)}")
+
+        batch_size, C, D, H, W = input.shape
+
+        # params expected to contain 'scale' and 'crop' as tensors of shape (B, 3)
+        if params is None or 'scale' not in params or 'crop' not in params:
+            raise ValueError("params must contain 'scale' and 'crop' tensors")
+
+        scales = params['scale']  # shape [B, 3]
+        crops = params['crop']    # shape [B, 3]
+
+        resample = self.flags.get('resample', 'nearest')
+
+        # Define interpolation modes
+        interp_down = resample
+        interp_up = resample
+
+
+        # Process per-channel and per-batch element
+        out = input.clone()
+
+        for b in range(batch_size):
+            x = input[b]  # [C, D, H, W]
+
+            sx, sy, sz = scales[b]
+            # compute downsampled size
+            down_D = max(1, int(round(float(sz) * D)))
+            down_H = max(1, int(round(float(sy) * H)))
+            down_W = max(1, int(round(float(sx) * W)))
+
+            # downsample
+            x_down = F.interpolate(
+                x.unsqueeze(0),
+                size=(down_D, down_H, down_W),
+                mode=interp_down,
+                align_corners=False if 'linear' in interp_down else None,
+            )
+
+            # upsample back to original resolution (keep as 4D tensor [1,1,D,H,W])
+            x_up = F.interpolate(
+                x_down,
+                size=(D, H, W),
+                mode=interp_up,
+                align_corners=False if 'linear' in interp_up else None,
+            ).squeeze(0)  # [C, D, H, W]
+
+            # determine crop fraction and crop size on the upsampled image
+            cx, cy, cz = crops[b]
+            # interpret crop as fraction of upsampled size to keep
+            crop_D = max(1, int(round(float(cz) * D)))
+            crop_H = max(1, int(round(float(cy) * H)))
+            crop_W = max(1, int(round(float(cx) * W)))
+
+            # choose top-left-front corner within possible range (bias by crop fraction)
+            max_z = max(0, D - crop_D)
+            max_y = max(0, H - crop_H)
+            max_x = max(0, W - crop_W)
+
+            if max_z == 0:
+                start_z = 0
+            else:
+                start_z = int(round(float(cz) * max_z)) if max_z > 0 else 0
+            if max_y == 0:
+                start_y = 0
+            else:
+                start_y = int(round(float(cy) * max_y)) if max_y > 0 else 0
+            if max_x == 0:
+                start_x = 0
+            else:
+                start_x = int(round(float(cx) * max_x)) if max_x > 0 else 0
+
+            # crop patch from upsampled image (full resolution)
+            z1 = start_z
+            y1 = start_y
+            x1 = start_x
+            z2 = z1 + crop_D
+            y2 = y1 + crop_H
+            x2 = x1 + crop_W
+
+            patch = x_up[:, z1:z2, y1:y2, x1:x2]
+
+            # place patch back into a full-resolution canvas of the original size (zeros elsewhere)
+            canvas = torch.zeros((C, D, H, W), dtype=patch.dtype, device=patch.device)
+            canvas[:, z1:z2, y1:y2, x1:x2] = patch
+
+            out[b] = canvas
+
+        return out
+    
+    def apply_non_transform_mask(
+        self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
+    ) -> Tensor:
+        """Process masks corresponding to the inputs that are no transformation applied."""
+        return input
+
+    def apply_transform_mask(
+        self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
+    ) -> Tensor:
+        """Process masks corresponding to the inputs that are transformed.
+
+        Note:
+            Convert "resample" arguments to "nearest" by default.
+
+        """
+        output = self.apply_transform(input, params, flags, transform)
+        return output
+
+class ShapeGenerator3D(RandomGeneratorBase):
+    def __init__(
+            self, 
+            scale: Tuple[float, float],
+            crop: Tuple[float, float]
+        ) -> None:
+        super().__init__()
+        self.scale = scale
+        self.crop = crop
+    
+    def make_samplers(self, device: torch.device, dtype: torch.dtype) -> None:
+        scale = _tuple_range_reader(self.scale, 3, device, dtype)
+        self.scalex_sampler = UniformDistribution(scale[0, 0], scale[0, 1], validate_args=False)
+        self.scaley_sampler = UniformDistribution(scale[1, 0], scale[1, 1], validate_args=False)
+        self.scalez_sampler = UniformDistribution(scale[2, 0], scale[2, 1], validate_args=False)
+
+        crop = _tuple_range_reader(self.crop, 3, device, dtype)
+        self.cropx_sampler = UniformDistribution(crop[0, 0], crop[0, 1], validate_args=False)
+        self.cropy_sampler = UniformDistribution(crop[1, 0], crop[1, 1], validate_args=False)
+        self.cropz_sampler = UniformDistribution(crop[2, 0], crop[2, 1], validate_args=False)
+
+    def forward(self, batch_shape: Tuple[int, ...], same_on_batch: bool = False) -> Dict[str, torch.Tensor]:
+        batch_size = batch_shape[0]
+
+        _device, _dtype = _extract_device_dtype([self.scalex_sampler, self.scaley_sampler, self.scalez_sampler, self.cropx_sampler, self.cropy_sampler, self.cropz_sampler])
+
+        scalex = _adapted_rsampling((batch_size,), self.scalex_sampler, same_on_batch)
+        scaley = _adapted_rsampling((batch_size,), self.scaley_sampler, same_on_batch)
+        scalez = _adapted_rsampling((batch_size,), self.scalez_sampler, same_on_batch)
+        scale = torch.stack([scalex, scaley, scalez], dim=1)
+
+        cropx = _adapted_rsampling((batch_size,), self.cropx_sampler, same_on_batch)
+        cropy = _adapted_rsampling((batch_size,), self.cropy_sampler, same_on_batch)
+        cropz = _adapted_rsampling((batch_size,), self.cropz_sampler, same_on_batch)
+        crop = torch.stack([cropx, cropy, cropz], dim=1)
+
+        return {
+            "scale": torch.as_tensor(scale, device=_device, dtype=_dtype),
+            "crop": torch.as_tensor(crop, device=_device, dtype=_dtype)
+        }

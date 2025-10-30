@@ -36,6 +36,12 @@
     },
     "HistogramEqualizationTransform": {
         "retain_stats": true,
+        "probability": 0
+    },
+    "ShapeTransform": {
+        "scale": [0.4, 1.0],
+        "crop": [0.2, 0.9],
+        "same_on_batch": false,
         "probability": 1
     },
     "AffineTransform": {
