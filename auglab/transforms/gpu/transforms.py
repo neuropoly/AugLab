@@ -73,7 +73,6 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             retain_stats=gamma_params['retain_stats'],
         ))
 
-        # Gamma transforms
         gamma_params = self.transform_params.get('GammaTransform')
         transforms.append(RandomGammaGPU(
             gamma_range=gamma_params['gamma_range'],
@@ -125,7 +124,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             keepdim=flip_params['keepdim']
         ))
 
-        # Artifacts generation
+        # Artifacts generation (Not implemented on GPU yet)
 
         # Spatial transforms
         affine_params = self.transform_params.get('AffineTransform')
@@ -137,6 +136,9 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             resample=affine_params['resample'],
             p=affine_params['probability']
         ))
+
+        # Elastic transforms (Not implemented on GPU yet)
+
         return transforms
 
 if __name__ == "__main__":
