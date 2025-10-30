@@ -124,12 +124,12 @@ class AugTransformsGPU(AugmentationSequentialCustom):
         # Spatial transforms
         affine_params = self.transform_params.get('AffineTransform')
         transforms.append(RandomAffine3DCustom(
-            degrees=affine_params.get('degrees'),
-            translate=affine_params.get('translate'),
-            scale=affine_params.get('scale'),
-            shears=affine_params.get('shear'),
-            resample='bilinear',
-            p=affine_params.get('probability')
+            degrees=affine_params['degrees'],
+            translate=affine_params['translate'],
+            scale=affine_params['scale'],
+            shears=affine_params['shear'],
+            resample=affine_params['resample'],
+            p=affine_params['probability']
         ))
         return transforms
 
