@@ -129,8 +129,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             scale=affine_params.get('scale'),
             shears=affine_params.get('shear'),
             resample='bilinear',
-            p=affine_params.get('probability'),
-            keepdim=False
+            p=affine_params.get('probability')
         ))
         return transforms
 

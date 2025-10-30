@@ -121,7 +121,7 @@ class RandomAffine3DCustom(RigidAffineAugmentationBase3D):
         same_on_batch: bool = False,
         align_corners: bool = False,
         p: float = 0.5,
-        keepdim: bool = False,
+        keepdim: bool = True,
     ) -> None:
         super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
         self.degrees = degrees
@@ -198,7 +198,7 @@ class RandomLowResTransform(RigidAffineAugmentationBase3D):
         same_on_batch: bool = False,
         resample: Union[str, int, Resample] = Resample.BILINEAR.name,
         p: float = 1.0,
-        keepdim: bool = False,
+        keepdim: bool = True,
         **kwargs,
     ) -> None:
         super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)

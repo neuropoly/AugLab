@@ -31,7 +31,7 @@ class RandomConvTransformGPU(ImageOnlyTransform):
         same_on_batch: bool = False,
         retain_stats: bool = False,
         p: float = 1.0,
-        keepdim: bool = False,
+        keepdim: bool = True,
         **kwargs,
     ) -> None:
         super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
@@ -236,7 +236,7 @@ class RandomGaussianNoiseGPU(ImageOnlyTransform):
         apply_to_channel: list[int] = [0],  # Apply to first channel by default
         same_on_batch: bool = False,
         p: float = 1.0,
-        keepdim: bool = False,
+        keepdim: bool = True,
         **kwargs,
     ) -> None:
         super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
@@ -283,7 +283,7 @@ class RandomBrightnessGPU(ImageOnlyTransform):
         apply_to_channel: list[int] = [0],  # Apply to first channel by default
         same_on_batch: bool = False,
         p: float = 1.0,
-        keepdim: bool = False,
+        keepdim: bool = True,
         **kwargs,
     ) -> None:
         super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
@@ -366,8 +366,8 @@ class RandomGammaGPU(ImageOnlyTransform):
             # Flatten spatial dimensions to compute min/max per batch element
             batch_size = channel_data.shape[0]
             flat_data = channel_data.view(batch_size, -1)  # [N, spatial_flattened]
-            minm = flat_data.min(dim=1, keepdim=True)[0]  # [N, 1]
-            maxm = flat_data.max(dim=1, keepdim=True)[0]  # [N, 1]
+            minm = flat_data.min(dim=1, keepdim=self.keepdim)[0]  # [N, 1]
+            maxm = flat_data.max(dim=1, keepdim=self.keepdim)[0]  # [N, 1]
             rnge = maxm - minm
             
             # Reshape min, max, range to broadcast over spatial dims: [N, 1] -> [N, 1, 1, ...]
@@ -427,7 +427,7 @@ class RandomFunctionGPU(ImageOnlyTransform):
         retain_stats: bool = False,
         same_on_batch: bool = False,
         p: float = 1.0,
-        keepdim: bool = False,
+        keepdim: bool = True,
         **kwargs,
     ) -> None:
         super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
@@ -495,7 +495,7 @@ class RandomHistogramEqualizationGPU(ImageOnlyTransform):
         retain_stats: bool = False,
         same_on_batch: bool = False,
         p: float = 1.0,
-        keepdim: bool = False,
+        keepdim: bool = True,
         **kwargs,
     ) -> None:
         super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
