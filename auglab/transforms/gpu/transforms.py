@@ -108,7 +108,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
 
         # Redistribute segmentation values (Not implemented on GPU yet)
 
-        # Shape transforms (Simulate low resolution)
+        # Shape transforms (Cropping and Simulating low resolution)
         shape_params = self.transform_params.get('ShapeTransform')
         transforms.append(RandomLowResTransform(
             p=shape_params.get('probability'),
@@ -116,8 +116,6 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             crop=shape_params.get('crop'),
             same_on_batch=shape_params.get('same_on_batch')
         ))
-
-        # Simulate low resolution
 
         # Mirroring transforms
 
