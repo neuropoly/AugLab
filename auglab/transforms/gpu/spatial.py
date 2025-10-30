@@ -186,7 +186,7 @@ class RandomAffine3DCustom(RigidAffineAugmentationBase3D):
         return output
 
 # Low resolution transform
-class RandomLowResTransform(RigidAffineAugmentationBase3D):
+class RandomLowResTransformGPU(RigidAffineAugmentationBase3D):
     """
     Apply low resolution simulation to 3D volumes (5D tensor).
     """

@@ -6,7 +6,7 @@ import torch
 
 from auglab.transforms.gpu.contrast import RandomConvTransformGPU, RandomGaussianNoiseGPU, RandomBrightnessGPU, RandomGammaGPU, RandomFunctionGPU, \
 RandomHistogramEqualizationGPU
-from auglab.transforms.gpu.spatial import RandomAffine3DCustom, RandomLowResTransform
+from auglab.transforms.gpu.spatial import RandomAffine3DCustom, RandomLowResTransformGPU
 from auglab.transforms.gpu.base import AugmentationSequentialCustom
 
 class AugTransformsGPU(AugmentationSequentialCustom):
@@ -110,7 +110,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
 
         # Shape transforms (Cropping and Simulating low resolution)
         shape_params = self.transform_params.get('ShapeTransform')
-        transforms.append(RandomLowResTransform(
+        transforms.append(RandomLowResTransformGPU(
             p=shape_params.get('probability'),
             scale=shape_params.get('scale'),
             crop=shape_params.get('crop'),
