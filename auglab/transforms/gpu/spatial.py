@@ -364,3 +364,125 @@ class ShapeGenerator3D(RandomGeneratorBase):
             "scale": torch.as_tensor(scale, device=_device, dtype=_dtype),
             "crop": torch.as_tensor(crop, device=_device, dtype=_dtype)
         }
+
+# Flip transforms
+class RandomFlipTransformGPU(RigidAffineAugmentationBase3D):
+    """
+    Apply low resolution simulation to 3D volumes (5D tensor).
+    """
+
+    def __init__(
+        self,
+        flip_axis: int = [0, 1, 2],
+        same_on_batch: bool = False,
+        p: float = 1.0,
+        keepdim: bool = True,
+        **kwargs,
+    ) -> None:
+        super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
+        # normalize flip_axis into a list of ints
+        if isinstance(flip_axis, int):
+            self.flip_axis = [flip_axis]
+        else:
+            self.flip_axis = list(flip_axis)
+        
+        # generator creates per-batch flip flags for axes (z, y, x)
+        self._param_generator = FlipGenerator3D(flip_axis=self.flip_axis)
+    
+    def compute_transformation(self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any]) -> Tensor:
+        return self.identity_matrix(input)
+
+    @torch.no_grad()
+    def apply_transform(
+        self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
+    ) -> Tensor:
+        
+        # input shape: (B, C, D, H, W)
+        if not isinstance(input, torch.Tensor):
+            raise TypeError(f"Expected input to be a Tensor. Got {type(input)}")
+
+        batch_size, C, D, H, W = input.shape
+
+        # Expect params to contain 'flip' tensor of shape [B, 3] with 0/1 values
+        flips = None
+        if params is not None and 'flip' in params:
+            flips = params['flip']
+
+        out = input.clone()
+        # For each batch element, build list of spatial dims to flip (D,H,W -> dims 2,3,4)
+        for b in range(batch_size):
+            flip_dims = []
+            if flips is not None:
+                fb = flips[b]
+                # fb expected as length-3 tensor for (z,y,x)
+                for axis in range(3):
+                    if int(fb[axis]) == 1 and axis in self.flip_axis:
+                        flip_dims.append(1 + axis)
+
+            if len(flip_dims) > 0:
+                out[b] = torch.flip(input[b], dims=tuple(flip_dims))
+
+        return out
+    
+    def apply_non_transform_mask(
+        self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
+    ) -> Tensor:
+        """Process masks corresponding to the inputs that are no transformation applied."""
+        return input
+
+    def apply_transform_mask(
+        self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
+    ) -> Tensor:
+        """Process masks corresponding to the inputs that are transformed.
+
+        Note:
+            Convert "resample" arguments to "nearest" by default.
+
+        """
+        output = self.apply_transform(input, params, flags, transform)
+        return output
+
+class FlipGenerator3D(RandomGeneratorBase):
+    """
+    Generate per-batch flip flags for 3 axes (z, y, x).
+
+    Returns a dict with key "flip" and value tensor of shape (B, 3) with 0/1 values.
+    Ensures at least one axis is flipped per batch element.
+    """
+    def __init__(self, flip_axis):
+        super().__init__()
+        # flip_axis is a list of allowed axes (subset of [0,1,2]).
+        if isinstance(flip_axis, int):
+            self.flip_axis = [flip_axis]
+        else:
+            self.flip_axis = list(flip_axis)
+
+    def make_samplers(self, device: torch.device, dtype: torch.dtype) -> None:
+        # use uniform samplers per axis and threshold at 0.5
+        self._samplers = [UniformDistribution(0.0, 1.0, validate_args=False) for _ in range(3)]
+
+    def forward(self, batch_shape: Tuple[int, ...], same_on_batch: bool = False) -> Dict[str, torch.Tensor]:
+        batch_size = batch_shape[0]
+
+        _device, _dtype = _extract_device_dtype(self._samplers)
+
+        samples = []
+        for s in self._samplers:
+            r = _adapted_rsampling((batch_size,), s, same_on_batch)
+            samples.append(r)
+
+        flips = torch.stack(samples, dim=1).to(device=_device, dtype=_dtype)
+        flips = (flips > 0.5).to(torch.int8)
+
+        # ensure at least one flip per batch element (choose randomly among allowed axes)
+        for b in range(batch_size):
+            if flips[b].sum() == 0:
+                # pick one allowed axis at random
+                if len(self.flip_axis) == 0:
+                    # nothing to flip
+                    continue
+                choice = int(torch.randint(low=0, high=len(self.flip_axis), size=(1,)).item())
+                axis = int(self.flip_axis[choice])
+                flips[b, axis] = 1
+
+        return {"flip": flips}

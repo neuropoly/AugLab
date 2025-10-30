@@ -1,12 +1,11 @@
 import os, json
 
-from kornia.augmentation import AugmentationSequential
 import torch.nn as nn
 import torch
 
 from auglab.transforms.gpu.contrast import RandomConvTransformGPU, RandomGaussianNoiseGPU, RandomBrightnessGPU, RandomGammaGPU, RandomFunctionGPU, \
 RandomHistogramEqualizationGPU
-from auglab.transforms.gpu.spatial import RandomAffine3DCustom, RandomLowResTransformGPU
+from auglab.transforms.gpu.spatial import RandomAffine3DCustom, RandomLowResTransformGPU, RandomFlipTransformGPU
 from auglab.transforms.gpu.base import AugmentationSequentialCustom
 
 class AugTransformsGPU(AugmentationSequentialCustom):
@@ -111,13 +110,20 @@ class AugTransformsGPU(AugmentationSequentialCustom):
         # Shape transforms (Cropping and Simulating low resolution)
         shape_params = self.transform_params.get('ShapeTransform')
         transforms.append(RandomLowResTransformGPU(
-            p=shape_params.get('probability'),
-            scale=shape_params.get('scale'),
-            crop=shape_params.get('crop'),
-            same_on_batch=shape_params.get('same_on_batch')
+            p=shape_params['probability'],
+            scale=shape_params['scale'],
+            crop=shape_params['crop'],
+            same_on_batch=shape_params['same_on_batch']
         ))
 
-        # Mirroring transforms
+        # Flipping transforms
+        flip_params = self.transform_params.get('FlipTransform')
+        transforms.append(RandomFlipTransformGPU(
+            flip_axis=flip_params['flip_axis'],
+            p=flip_params['probability'],
+            same_on_batch=flip_params['same_on_batch'],
+            keepdim=flip_params['keepdim']
+        ))
 
         # Artifacts generation
 
