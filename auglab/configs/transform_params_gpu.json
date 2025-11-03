@@ -18,7 +18,7 @@
     },
     "GaussianNoiseTransform": {
         "mean": 0.0,
-        "std": 1.0,
+        "std": 2.0,
         "probability": 0
     },
     "BrightnessTransform": {
@@ -26,7 +26,7 @@
         "probability": 0
     },
     "GammaTransform": {
-        "gamma_range": [0.5, 1.5],
+        "gamma_range": [0.7, 1.5],
         "retain_stats": false,
         "probability": 0
     },
@@ -39,16 +39,16 @@
         "probability": 0
     },
     "ShapeTransform": {
-        "scale": [0.4, 1.0],
-        "crop": [0.2, 0.9],
+        "scale": [0.3, 1.0],
+        "crop": [0.5, 0.9],
         "same_on_batch": false,
         "probability": 0
     },
     "FlipTransform": {
-        "flip_axis": [],
+        "flip_axis": [0],
         "same_on_batch": false,
         "keepdim": true,
-        "probability": 1
+        "probability": 0
     },
     "AffineTransform": {
         "degrees": 10,
