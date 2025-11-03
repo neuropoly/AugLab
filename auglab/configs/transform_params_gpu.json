@@ -3,46 +3,46 @@
         "kernel_type": "Scharr",
         "absolute": true,
         "retain_stats": true,
-        "probability": 0
+        "probability": 0.10
     },
     "GaussianBlurTransform": {
         "kernel_type": "GaussianBlur",
         "sigma": 2.0,
-        "probability": 0
+        "probability": 0.10
     },
     "UnsharpMaskTransform": {
         "kernel_type": "UnsharpMask",
         "sigma": 1.0,
         "unsharp_amount": 1.5,
-        "probability": 0
+        "probability": 0.10
     },
     "GaussianNoiseTransform": {
         "mean": 0.0,
         "std": 2.0,
-        "probability": 0
+        "probability": 0.30
     },
     "BrightnessTransform": {
         "brightness_range": [0.5, 1.5],
-        "probability": 0
+        "probability": 0.10
     },
     "GammaTransform": {
         "gamma_range": [0.7, 1.5],
         "retain_stats": false,
-        "probability": 0
+        "probability": 0.15
     },
     "FunctionTransform": {
         "retain_stats": true,
-        "probability": 0
+        "probability": 0.05
     },
     "HistogramEqualizationTransform": {
         "retain_stats": true,
-        "probability": 0
+        "probability": 0.10
     },
     "ShapeTransform": {
         "scale": [0.3, 1.0],
-        "crop": [0.5, 0.9],
+        "crop": [0.6, 1.0],
         "same_on_batch": false,
-        "probability": 0
+        "probability": 0.3
     },
     "FlipTransform": {
         "flip_axis": [0],
@@ -56,6 +56,6 @@
         "scale": [0.9, 1.1],
         "shear": [-10, 10, -10, 10, -10, 10],
         "resample": "bilinear",
-        "probability": 0
+        "probability": 0.4
     }
 }
