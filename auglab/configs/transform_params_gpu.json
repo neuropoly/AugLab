@@ -19,7 +19,7 @@
     "GaussianNoiseTransform": {
         "mean": 0.0,
         "std": 2.0,
-        "probability": 0.30
+        "probability": 0.20
     },
     "BrightnessTransform": {
         "brightness_range": [0.5, 1.5],
