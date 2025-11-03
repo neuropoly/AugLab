@@ -253,10 +253,12 @@ class RandomGaussianNoiseGPU(ImageOnlyTransform):
             if self.same_on_batch:
                 std = torch.rand(1, device=input.device, dtype=input.dtype) * self.std
                 noise = torch.randn_like(input[:,c], device=input.device, dtype=input.dtype)
+                noise = noise * std + self.mean
             else:
                 std = torch.rand(input.shape[0], device=input.device, dtype=input.dtype) * self.std
                 noise = torch.randn_like(input[:,c], device=input.device, dtype=input.dtype)
-            noise = noise * std + self.mean
+                for i in range(input.shape[0]):
+                    noise[i] = noise[i] * std[i] + self.mean
             input[:, c] += noise
 
         return input
@@ -299,9 +301,11 @@ class RandomBrightnessGPU(ImageOnlyTransform):
         for c in self.apply_to_channel:
             if self.same_on_batch:
                 factor = torch.rand(1, device=input.device, dtype=input.dtype) * (self.brightness_range[1] - self.brightness_range[0]) + self.brightness_range[0]
+                input[:, c] *= factor
             else:
                 factor = torch.rand(input.shape[0], device=input.device, dtype=input.dtype) * (self.brightness_range[1] - self.brightness_range[0]) + self.brightness_range[0]
-            input[:, c] *= factor
+                for i in range(input.shape[0]):
+                    input[i, c] *= factor[i]
         return input
 
 ## Gamma transform
