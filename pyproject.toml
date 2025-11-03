@@ -42,6 +42,9 @@ all = [
     "wandb",
 ]
 
+[project.scripts]
+auglab_add_nnunettrainer = "auglab.add_trainer:main"
+
 [project.urls]
 homepage = "https://github.com/neuropoly/AugLab"
 repository = "https://github.com/neuropoly/AugLab"
