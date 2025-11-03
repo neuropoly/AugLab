@@ -28,13 +28,18 @@ keywords = [
 ]
 dependencies = [
     "batchgeneratorsv2",
+    "nnunetv2",
+    "kornia"
+]
+
+[project.optional-dependencies]
+all = [
     "torchio",
     "monai[all]",
     "progress",
     "numpy",
     "tqdm",
     "wandb",
-    "kornia"
 ]
 
 [project.urls]
