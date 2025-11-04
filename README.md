@@ -26,13 +26,13 @@ This repository contains:
 
 3. Clone this repository:
    - Git clone
-   > **Note:** If you pull a new version from GitHub, make sure to rerun this command with the flag `--upgrade`
    ```bash
    git clone git@github.com:neuropoly/AugLab.git
    cd AugLab
    ```
 
 4. Install AugLab using one of the following commands:
+   > **Note:** If you pull a new version from GitHub, make sure to rerun this command with the flag `--upgrade`
    - nnunetv2 only usage
    ```bash
    python3 -m pip install -e auglab
