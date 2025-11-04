@@ -37,8 +37,10 @@ def main():
 
     # Copy trainer
     output_path = nnunet_trainers_path / source_trainer.name
-    if not output_path.exists():
-        shutil.copy(source_trainer, output_path)
+    shutil.copy(source_trainer, output_path)
+
+    # Confirmation message
+    print(f"Trainer {args.trainer} was added to {output_path}")
     
 if __name__ == "__main__":
     main()
