@@ -24,19 +24,39 @@ This repository contains:
    conda activate myenv
    ```
 
-3. Install this repository using one of the following options:
-   - Git clone (for developpers)
+3. Clone this repository:
+   - Git clone
    > **Note:** If you pull a new version from GitHub, make sure to rerun this command with the flag `--upgrade`
    ```bash
    git clone git@github.com:neuropoly/AugLab.git
    cd AugLab
-   python3 -m pip install -e .
    ```
 
-4. Install PyTorch following the instructions on their [website](https://pytorch.org/). Be sure to add the `--upgrade` flag to your installation command to replace any existing PyTorch installation.
+4. Install AugLab using one of the following commands:
+   - nnunetv2 only usage
+   ```bash
+   python3 -m pip install -e auglab
+   ```
+   - full usage (with Monai and other dependencies)
+   ```bash
+   python3 -m pip install -e auglab[all]
+   ```
+
+5. Install PyTorch following the instructions on their [website](https://pytorch.org/). Be sure to add the `--upgrade` flag to your installation command to replace any existing PyTorch installation.
    Example:
 ```bash
 python3 -m pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu118 --upgrade
+```
+
+## Run nnunet training with AugLab trainer
+
+To use the AugLab trainer with nnUNet, first add the trainer to your nnUNet installation by running:
+```bash
+auglab_add_nnunettrainer --trainer nnUNetTrainerDAExt
+```
+Then, when you run nnUNet training as usual, specifying the AugLab trainer, for example:
+```bash
+nnUNetv2_train 100 3d_fullres 0 -tr nnUNetTrainerDAExtGPU -p nnUNetPlans
 ```
 
 ## How to use my data ?
