@@ -188,6 +188,9 @@ if __name__ == "__main__":
     
     import cv2
     import numpy as np
+    import warnings, sys, os
+    warnings.simplefilter("always")
+
     # Convert tensors to numpy arrays
     img_tensor_np = img_tensor.cpu().detach().numpy()
     seg_tensor_np = seg_tensor.cpu().detach().numpy()

@@ -153,12 +153,17 @@ class RandomAffine3DCustom(RigidAffineAugmentationBase3D):
         if not isinstance(transform, Tensor):
             raise TypeError(f"Expected the transform to be a Tensor. Gotcha {type(transform)}")
 
+        # Ensure align_corners is a boolean (avoid passing None to affine_grid/grid_sample)
+        align = flags.get("align_corners", True)
+        if align is None:
+            align = True
+
         return warp_affine3d(
             input,
             transform[:, :3, :],
             (input.shape[-3], input.shape[-2], input.shape[-1]),
             flags["resample"].name.lower(),
-            align_corners=flags["align_corners"],
+            align_corners=bool(align),
         )
     
     def apply_non_transform_mask(
