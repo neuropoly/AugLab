@@ -14,18 +14,19 @@ from batchgeneratorsv2.transforms.spatial.spatial import SpatialTransform
 from batchgeneratorsv2.transforms.utils.random import RandomTransform
 from batchgeneratorsv2.transforms.utils.compose import ComposeTransforms
 
-from auglab.transforms.artifact import ArtifactTransform
-from auglab.transforms.contrast import ConvTransform, HistogramEqualTransform, FunctionTransform
-from auglab.transforms.fromSeg import RedistributeTransform
-from auglab.transforms.spatial import SpatialCustomTransform, ShapeTransform
+from auglab.transforms.cpu.artifact import ArtifactTransform
+from auglab.transforms.cpu.contrast import ConvTransform, HistogramEqualTransform, FunctionTransform
+from auglab.transforms.cpu.fromSeg import RedistributeTransform
+from auglab.transforms.cpu.spatial import SpatialCustomTransform, ShapeTransform
 
-class AugTransforms:
+class AugTransforms(ComposeTransforms):
     def __init__(self, json_path: str):
         # Load transform parameters from JSON
         config_path = os.path.join(json_path)
         with open(config_path, 'r') as f:
             self.transform_params = json.load(f)
         self.transforms = self._build_transforms()
+        super().__init__(transforms=self.transforms)
 
     def _build_transforms(self):
         transform_params = self.transform_params
@@ -195,7 +196,29 @@ class AugTransforms:
             ), apply_probability=spatial_prob
         ))
 
-        return ComposeTransforms(transforms)
+        return transforms
 
-    def __call__(self, data):
-        return self.transforms(**data)
+class AugTransformsTest(ComposeTransforms):
+    def __init__(self):
+        self.transforms = self._build_transforms()
+        super().__init__(transforms=self.transforms)
+
+    def _build_transforms(self):
+        transforms = []
+
+        # Scharr filter
+        transforms.append(RandomTransform(
+            ConvTransform(
+                kernel_type="Scharr",
+                absolute=True,
+            ), apply_probability=0.9
+        ))
+
+        # Affine transforms
+        transforms.append(RandomTransform(
+            SpatialCustomTransform(
+                affine=True,
+            ), apply_probability=0.9
+        ))
+
+        return transforms
