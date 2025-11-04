@@ -119,7 +119,7 @@ class RandomAffine3DCustom(RigidAffineAugmentationBase3D):
         ] = None,
         resample: Union[str, int, Resample] = Resample.BILINEAR.name,
         same_on_batch: bool = False,
-        align_corners: bool = False,
+        align_corners: bool = True,
         p: float = 0.5,
         keepdim: bool = True,
     ) -> None:
