@@ -353,7 +353,7 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
         # So autocast will only be active if we have a cuda device.
         with autocast(self.device.type, enabled=True) if self.device.type == 'cuda' else dummy_context():            
             # Apply GPU augmentations to full-resolution data/target
-            data, target = self.transforms(data, target)
+            # data, target = self.transforms(data, target)
             
             # Create multi-scale targets for deep supervision after augmentation
             deep_supervision_scales = self._get_deep_supervision_scales()
