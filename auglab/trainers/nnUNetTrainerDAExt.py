@@ -356,8 +356,8 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
             data, target = self.transforms(data, target)
             
             # Create multi-scale targets for deep supervision after augmentation
-            if self.enable_deep_supervision:
-                deep_supervision_scales = self._get_deep_supervision_scales()
+            deep_supervision_scales = self._get_deep_supervision_scales()
+            if deep_supervision_scales is not None:
                 ds_transform = DownsampleSegForDSTransformCustom(ds_scales=deep_supervision_scales)
                 target = ds_transform(target)
             
