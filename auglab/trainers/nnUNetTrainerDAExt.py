@@ -333,8 +333,8 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
             )
 
         # NOTE: DownsampleSegForDSTransform is now handled in train_step for GPU augmentations
-        # if deep_supervision_scales is not None:
-        #     transforms.append(DownsampleSegForDSTransform(ds_scales=deep_supervision_scales))
+        if deep_supervision_scales is not None:
+            transforms.append(DownsampleSegForDSTransform(ds_scales=deep_supervision_scales))
 
         return ComposeTransforms(transforms)
     
@@ -344,7 +344,11 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
 
         data = data.to(self.device, non_blocking=True)
         # Now target should be a single tensor, not a list
-        target = target.to(self.device, non_blocking=True)
+        # target = target.to(self.device, non_blocking=True)
+        if isinstance(target, list):
+            target = [i.to(self.device, non_blocking=True) for i in target]
+        else:
+            target = target.to(self.device, non_blocking=True)
 
         self.optimizer.zero_grad(set_to_none=True)
         # Autocast can be annoying
@@ -356,10 +360,10 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
             # data, target = self.transforms(data, target)
             
             # Create multi-scale targets for deep supervision after augmentation
-            deep_supervision_scales = self._get_deep_supervision_scales()
-            if deep_supervision_scales is not None:
-                ds_transform = DownsampleSegForDSTransformCustom(ds_scales=deep_supervision_scales)
-                target = ds_transform(target)
+            # deep_supervision_scales = self._get_deep_supervision_scales()
+            # if deep_supervision_scales is not None:
+            #     ds_transform = DownsampleSegForDSTransformCustom(ds_scales=deep_supervision_scales)
+            #     target = ds_transform(target)
             
             output = self.network(data)
             # del data
