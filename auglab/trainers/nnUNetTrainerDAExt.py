@@ -239,7 +239,15 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
         configs_path = importlib.resources.files(configs)
         json_path = configs_path / "transform_params_gpu.json"
         self.transforms = AugTransformsGPU(json_path=str(json_path)).to(self.device)
-
+    
+    def configure_rotation_dummyDA_mirroring_and_inital_patch_size(self):
+        rotation_for_DA, do_dummy_2d_data_aug, initial_patch_size, mirror_axes = \
+            super().configure_rotation_dummyDA_mirroring_and_inital_patch_size()
+        # Remove mirroring
+        mirror_axes = None
+        self.inference_allowed_mirroring_axes = None
+        return rotation_for_DA, do_dummy_2d_data_aug, initial_patch_size, mirror_axes
+    
     @staticmethod
     def get_training_transforms(
             patch_size: Union[np.ndarray, Tuple[int]],
