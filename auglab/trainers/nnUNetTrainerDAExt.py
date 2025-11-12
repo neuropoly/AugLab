@@ -239,6 +239,14 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
         json_path = configs_path / "transform_params_gpu.json"
         self.transforms = AugTransformsGPU(json_path=str(json_path)).to(self.device)
 
+    def configure_rotation_dummyDA_mirroring_and_inital_patch_size(self):
+        rotation_for_DA, do_dummy_2d_data_aug, initial_patch_size, mirror_axes = \
+            super().configure_rotation_dummyDA_mirroring_and_inital_patch_size()
+        # Remove mirroring
+        mirror_axes = None
+        self.inference_allowed_mirroring_axes = None
+        return rotation_for_DA, do_dummy_2d_data_aug, initial_patch_size, mirror_axes
+
     @staticmethod
     def get_training_transforms(
             patch_size: Union[np.ndarray, Tuple[int]],
@@ -345,6 +353,10 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
         data = data.to(self.device, non_blocking=True)
         # Now target should be a single tensor, not a list
         target = target.to(self.device, non_blocking=True)
+        # if isinstance(target, list):
+        #     target = [i.to(self.device, non_blocking=True) for i in target]
+        # else:
+        #     target = target.to(self.device, non_blocking=True)
 
         self.optimizer.zero_grad(set_to_none=True)
         # Autocast can be annoying
@@ -354,13 +366,13 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
         with autocast(self.device.type, enabled=True) if self.device.type == 'cuda' else dummy_context():            
             # Apply GPU augmentations to full-resolution data/target
             data, target = self.transforms(data, target)
-            
+    
             # Create multi-scale targets for deep supervision after augmentation
-            if self.enable_deep_supervision:
-                deep_supervision_scales = self._get_deep_supervision_scales()
+            deep_supervision_scales = self._get_deep_supervision_scales()
+            if deep_supervision_scales is not None:
                 ds_transform = DownsampleSegForDSTransformCustom(ds_scales=deep_supervision_scales)
                 target = ds_transform(target)
-            
+    
             output = self.network(data)
             # del data
             l = self.loss(output, target)
