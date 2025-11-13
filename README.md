@@ -54,10 +54,20 @@ To use the AugLab trainer with nnUNet, first add the trainer to your nnUNet inst
 ```bash
 auglab_add_nnunettrainer --trainer nnUNetTrainerDAExt
 ```
+
 Then, when you run nnUNet training as usual, specifying the AugLab trainer, for example:
 ```bash
 nnUNetv2_train 100 3d_fullres 0 -tr nnUNetTrainerDAExtGPU -p nnUNetPlans
 ```
+
+You can also specify your data augmentation parameters by providing a JSON file:
+> **Note:** By default [auglab/configs/transform_params.json](https://github.com/neuropoly/AugLab/blob/main/auglab/configs/transform_params_gpu.json) is used if no file is specified.
+```bash
+AUGLAB_PARAMS_GPU_JSON=/path/to/your/params.json nnUNetv2_train 100 3d_fullres 0 -tr nnUNetTrainerDAExtGPU -p nnUNetPlans
+```
+
+> ⚠️ **Warning** : To avoid any paths issues, please specify an absolute path to your JSON file.
+
 
 ## How to use my data ?
 
