@@ -239,6 +239,7 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
         configs_path = importlib.resources.files(configs)
         json_path = os.environ.get("AUGLAB_PARAMS_GPU_JSON", str(configs_path / "transform_params_gpu.json"))
         self.transforms = AugTransformsGPU(json_path=json_path).to(self.device)
+        print(f'Using AugLab GPU transforms with parameters from: {json_path}')
 
     def configure_rotation_dummyDA_mirroring_and_inital_patch_size(self):
         rotation_for_DA, do_dummy_2d_data_aug, initial_patch_size, mirror_axes = \
