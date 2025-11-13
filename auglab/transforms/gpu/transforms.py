@@ -25,61 +25,66 @@ class AugTransformsGPU(AugmentationSequentialCustom):
 
         # Scharr filter
         scharr_params = self.transform_params.get('ScharrTransform')
-        transforms.append(RandomConvTransformGPU(
-            kernel_type=scharr_params['kernel_type'],
-            p=scharr_params['probability'],
-            retain_stats=scharr_params['retain_stats'],
-            absolute=scharr_params['absolute'],
-        ))
+        if scharr_params is not None:
+            transforms.append(RandomConvTransformGPU(
+                kernel_type=scharr_params.get('kernel_type', 'Scharr'),
+                p=scharr_params.get('probability', 0),
+                retain_stats=scharr_params.get('retain_stats', True),
+                absolute=scharr_params.get('absolute', True),
+            ))
 
         # Gaussian blur
         gaussianblur_params = self.transform_params.get('GaussianBlurTransform')
-        transforms.append(RandomConvTransformGPU(
-            kernel_type=gaussianblur_params['kernel_type'],
-            p=gaussianblur_params['probability'],
-            sigma=gaussianblur_params['sigma'],
-        ))
+        if gaussianblur_params is not None:
+            transforms.append(RandomConvTransformGPU(
+                kernel_type=gaussianblur_params.get('kernel_type', 'GaussianBlur'),
+                p=gaussianblur_params.get('probability', 0),
+                sigma=gaussianblur_params.get('sigma', 1.0),
+            ))
 
         # Unsharp masking
         unsharp_params = self.transform_params.get('UnsharpMaskTransform')
-        transforms.append(RandomConvTransformGPU(
-            kernel_type=unsharp_params['kernel_type'],
-            p=unsharp_params['probability'],
-            sigma=unsharp_params['sigma'],
-            unsharp_amount=unsharp_params['unsharp_amount'],
+        if unsharp_params is not None:
+            transforms.append(RandomConvTransformGPU(
+                kernel_type=unsharp_params.get('kernel_type', 'UnsharpMask'),
+                p=unsharp_params.get('probability', 0),
+                sigma=unsharp_params.get('sigma', 1.0),
+                unsharp_amount=unsharp_params.get('unsharp_amount', 1.5),
         ))
 
         # Noise transforms
         noise_params = self.transform_params.get('GaussianNoiseTransform')
-        transforms.append(RandomGaussianNoiseGPU(
-            mean=noise_params['mean'],
-            std=noise_params['std'],
-            p=noise_params['probability'],
-        ))
+        if noise_params is not None:
+            transforms.append(RandomGaussianNoiseGPU(
+                mean=noise_params.get('mean', 0.0),
+                std=noise_params.get('std', 1.0),
+                p=noise_params.get('probability', 0),
+            ))
 
         # Brightness transforms
         brightness_params = self.transform_params.get('BrightnessTransform')
-        transforms.append(RandomBrightnessGPU(
-            brightness_range=brightness_params['brightness_range'],
-            p=brightness_params['probability'],
-        ))        
+        if brightness_params is not None:
+            transforms.append(RandomBrightnessGPU(
+                brightness_range=brightness_params.get('brightness_range', [0.5, 1.5]),
+                p=brightness_params.get('probability', 0),
+            ))
 
         # Gamma transforms
         gamma_params = self.transform_params.get('GammaTransform')
-        transforms.append(RandomGammaGPU(
-            gamma_range=gamma_params['gamma_range'],
-            p=gamma_params['probability'],
-            invert_image=False,
-            retain_stats=gamma_params['retain_stats'],
-        ))
+        if gamma_params is not None:
+            transforms.append(RandomGammaGPU(
+                gamma_range=gamma_params.get('gamma_range', [0.7, 1.5]),
+                p=gamma_params.get('probability', 0),
+                invert_image=False,
+                retain_stats=gamma_params.get('retain_stats', False),
+            ))
 
-        gamma_params = self.transform_params.get('GammaTransform')
-        transforms.append(RandomGammaGPU(
-            gamma_range=gamma_params['gamma_range'],
-            p=gamma_params['probability'],
-            invert_image=True,
-            retain_stats=gamma_params['retain_stats'],
-        ))
+            transforms.append(RandomGammaGPU(
+                gamma_range=gamma_params.get('gamma_range', [0.7, 1.5]),
+                p=gamma_params.get('probability', 0),
+                invert_image=True,
+                retain_stats=gamma_params.get('retain_stats', False),
+            ))
 
         # Apply functions
         func_list = [
@@ -90,59 +95,65 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             lambda x: 1/(1 + torch.exp(-x)),
         ]
         function_params = self.transform_params.get('FunctionTransform')
-        for func in func_list:
-            transforms.append(RandomFunctionGPU(
-                func=func,
-                p=function_params['probability'],
-                retain_stats=function_params['retain_stats'],
+        if function_params is not None:
+            for func in func_list:
+                transforms.append(RandomFunctionGPU(
+                    func=func,
+                    p=function_params.get('probability', 0),
+                    retain_stats=function_params.get('retain_stats', False),
             ))
         
-        # Inverse transform
+        # Inverse transform (max - pixel_value)
         inverse_params = self.transform_params.get('InverseTransform')
-        transforms.append(RandomInverseGPU(
-            p=inverse_params['probability'],
-            retain_stats=inverse_params['retain_stats'],
-        ))
-
+        if inverse_params is not None:
+            transforms.append(RandomInverseGPU(
+                p=inverse_params.get('probability', 0),
+                retain_stats=inverse_params.get('retain_stats', False),
+            ))
+        
         # Histogram manipulations
         histo_params = self.transform_params.get('HistogramEqualizationTransform')
-        transforms.append(RandomHistogramEqualizationGPU(
-            p=histo_params['probability'],
-            retain_stats=histo_params['retain_stats'],
-        ))
-
+        if histo_params is not None:
+            transforms.append(RandomHistogramEqualizationGPU(
+                p=histo_params.get('probability', 0),
+                retain_stats=histo_params.get('retain_stats', False),
+            ))
+        
         # Redistribute segmentation values (Not implemented on GPU yet)
 
         # Shape transforms (Cropping and Simulating low resolution)
         shape_params = self.transform_params.get('ShapeTransform')
-        transforms.append(RandomLowResTransformGPU(
-            p=shape_params['probability'],
-            scale=shape_params['scale'],
-            crop=shape_params['crop'],
-            same_on_batch=shape_params['same_on_batch']
+        if shape_params is not None:
+            transforms.append(RandomLowResTransformGPU(
+                p=shape_params.get('probability', 0),
+                scale=shape_params.get('scale', [0.3, 1.0]),
+                crop=shape_params.get('crop', [1.0, 1.0]),
+                same_on_batch=shape_params.get('same_on_batch', False)
         ))
 
         # Flipping transforms
         flip_params = self.transform_params.get('FlipTransform')
-        transforms.append(RandomFlipTransformGPU(
-            flip_axis=flip_params['flip_axis'],
-            p=flip_params['probability'],
-            same_on_batch=flip_params['same_on_batch'],
-            keepdim=flip_params['keepdim']
-        ))
+        if flip_params is not None:
+            transforms.append(RandomFlipTransformGPU(
+                flip_axis=flip_params.get('flip_axis', [0]),
+                p=flip_params.get('probability', 0),
+                same_on_batch=flip_params.get('same_on_batch', False),
+                keepdim=flip_params.get('keepdim', True)
+            ))
 
         # Artifacts generation (Not implemented on GPU yet)
 
         # Spatial transforms
         affine_params = self.transform_params.get('AffineTransform')
-        transforms.append(RandomAffine3DCustom(
-            degrees=affine_params['degrees'],
-            translate=affine_params['translate'],
-            scale=affine_params['scale'],
-            shears=affine_params['shear'],
-            resample=affine_params['resample'],
-            p=affine_params['probability']
-        ))
+        if affine_params is not None:
+            transforms.append(RandomAffine3DCustom(
+                degrees=affine_params.get('degrees', 10),
+                translate=affine_params.get('translate', [0.1, 0.1, 0.1]),
+                scale=affine_params.get('scale', [0.9, 1.1]),
+                shears=affine_params.get('shear', [-10, 10, -10, 10, -10, 10]),
+                resample=affine_params.get('resample', "bilinear"),
+                p=affine_params.get('probability', 0)
+            ))
 
         # Elastic transforms (Not implemented on GPU yet)
 
