@@ -60,7 +60,7 @@ Then, when you run nnUNet training as usual, specifying the AugLab trainer, for 
 nnUNetv2_train 100 3d_fullres 0 -tr nnUNetTrainerDAExtGPU -p nnUNetPlans
 ```
 
-You can also specify your data augmentation parameters by providing a JSON file:
+You can also specify your data augmentation parameters by providing a JSON file using the environment variable `AUGLAB_PARAMS_GPU_JSON`:
 > **Note:** By default [auglab/configs/transform_params_gpu.json](https://github.com/neuropoly/AugLab/blob/main/auglab/configs/transform_params_gpu.json) is used if no file is specified.
 ```bash
 AUGLAB_PARAMS_GPU_JSON=/path/to/your/params.json nnUNetv2_train 100 3d_fullres 0 -tr nnUNetTrainerDAExtGPU -p nnUNetPlans
