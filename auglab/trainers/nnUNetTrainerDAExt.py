@@ -23,6 +23,7 @@ from batchgeneratorsv2.transforms.utils.seg_to_regions import ConvertSegmentatio
 from batchgeneratorsv2.transforms.utils.pseudo2d import Convert3DTo2DTransform, Convert2DTo3DTransform
 from batchgeneratorsv2.transforms.spatial.spatial import SpatialTransform
 
+import os
 import torch
 import importlib
 from torch import autocast
@@ -236,8 +237,9 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
 
         # Load transform parameters from json file
         configs_path = importlib.resources.files(configs)
-        json_path = configs_path / "transform_params_gpu.json"
-        self.transforms = AugTransformsGPU(json_path=str(json_path)).to(self.device)
+        json_path = os.environ.get("AUGLAB_PARAMS_GPU_JSON", str(configs_path / "transform_params_gpu.json"))
+        self.transforms = AugTransformsGPU(json_path=json_path).to(self.device)
+        print(f'Using AugLab GPU transforms with parameters from: {json_path}')
 
     def configure_rotation_dummyDA_mirroring_and_inital_patch_size(self):
         rotation_for_DA, do_dummy_2d_data_aug, initial_patch_size, mirror_axes = \
