@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch
 
 from auglab.transforms.gpu.contrast import RandomConvTransformGPU, RandomGaussianNoiseGPU, RandomBrightnessGPU, RandomGammaGPU, RandomFunctionGPU, \
-RandomHistogramEqualizationGPU
+RandomHistogramEqualizationGPU, RandomInverseGPU
 from auglab.transforms.gpu.spatial import RandomAffine3DCustom, RandomLowResTransformGPU, RandomFlipTransformGPU
 from auglab.transforms.gpu.base import AugmentationSequentialCustom
 
@@ -96,6 +96,13 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 p=function_params['probability'],
                 retain_stats=function_params['retain_stats'],
             ))
+        
+        # Inverse transform
+        inverse_params = self.transform_params.get('InverseTransform')
+        transforms.append(RandomInverseGPU(
+            p=inverse_params['probability'],
+            retain_stats=inverse_params['retain_stats'],
+        ))
 
         # Histogram manipulations
         histo_params = self.transform_params.get('HistogramEqualizationTransform')

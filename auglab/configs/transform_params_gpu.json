@@ -34,6 +34,10 @@
         "retain_stats": true,
         "probability": 0.05
     },
+    "InverseTransform": {
+        "retain_stats": true,
+        "probability": 0.3
+    },
     "HistogramEqualizationTransform": {
         "retain_stats": true,
         "probability": 0.10
