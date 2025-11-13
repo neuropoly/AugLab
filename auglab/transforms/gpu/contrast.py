@@ -477,6 +477,56 @@ class RandomFunctionGPU(ImageOnlyTransform):
         
         return input
 
+## Inverse transform
+class RandomInverseGPU(ImageOnlyTransform):
+    """Inverse image based on probability.
+    If the image is torch Tensor, it is expected to have [N, C, X, Y] or [N, C, X, Y, Z] shape.
+
+    Args:
+        apply_to_channel (list of int): List of channel indices to apply the brightness adjustment to. Default is [0].
+        same_on_batch (bool): Apply the same transformation across the batch. Default is False.
+        p (float): Probability of applying the transform. Default is 1.0.
+        keepdim (bool): Whether to keep the number of dimensions. Default is False.
+
+    Returns:
+        Tensor: Image with adjusted brightness.
+    """
+    
+    def __init__(
+        self,
+        apply_to_channel: list[int] = [0],  # Apply to first channel by default
+        retain_stats: bool = False,
+        same_on_batch: bool = False,
+        p: float = 1.0,
+        keepdim: bool = True,
+        **kwargs,
+    ) -> None:
+        super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
+        self.apply_to_channel = apply_to_channel
+        self.retain_stats = retain_stats
+
+    @torch.no_grad()  # disable gradients for efficiency
+    def apply_transform(
+        self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
+    ) -> Tensor:
+
+        # Inverse image
+        for c in self.apply_to_channel:
+            for i in range(input.shape[0]):
+                x= input[i, c]  # shape [...spatial...]
+                if self.retain_stats:
+                    orig_means = x.mean()
+                    orig_stds = x.std()
+                max_val = x.max()
+                x = max_val - x
+                if self.retain_stats:
+                    # Adjust mean and std to match original
+                    eps = 1e-8
+                    new_mean = x.mean()  # scalar
+                    new_std = x.std()    # scalar
+                    input[i, c] = (x - new_mean) / (new_std + eps) * orig_stds + orig_means
+        return input
+
 ## Histogram transform
 class RandomHistogramEqualizationGPU(ImageOnlyTransform):
     """Apply histogram equalization transformation to the image based on probability.
