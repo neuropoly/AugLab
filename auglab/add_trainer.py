@@ -6,7 +6,7 @@ import nnunetv2
 
 import auglab.trainers as trainers
 
-def parse_args():
+def main():
     parser = argparse.ArgumentParser(
         description="This script copies an auglab nnUNetTrainer inside the nnunet folder."
     )
@@ -17,19 +17,24 @@ def parse_args():
         required=True,
         help="nnUNetTrainer to be copied. Choices are: nnUNetTrainerDAExt and nnUNetTrainerTest",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
 
-def main():
-    args = parse_args()
+    # Get trainer name
+    trainer_name = args.trainer
+
+    # Add trainer
+    add_trainer(trainer_name)
+
+def add_trainer(trainer_name: str):
 
     # Find trainer path
     trainers_path = importlib.resources.files(trainers)
-    if args.trainer == "nnUNetTrainerDAExt":
+    if trainer_name == "nnUNetTrainerDAExt":
         source_trainer = trainers_path / "nnUNetTrainerDAExt.py"
-    elif args.trainer == "nnUNetTrainerTest":
+    elif trainer_name == "nnUNetTrainerTest":
         source_trainer = trainers_path / "nnUNetTrainerTest.py"
     else:
-        raise ValueError(f"Trainer {args.trainer} not recognized.")
+        raise ValueError(f"Trainer {trainer_name} not recognized.")
 
     # Find nnUNet path
     nnunetv2_path = importlib.resources.files(nnunetv2)
@@ -40,7 +45,7 @@ def main():
     shutil.copy(source_trainer, output_path)
 
     # Confirmation message
-    print(f"Trainer {args.trainer} was added to {output_path}")
+    print(f"Trainer {trainer_name} was added to {output_path}")
     
 if __name__ == "__main__":
     main()
