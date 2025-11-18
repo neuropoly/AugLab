@@ -43,10 +43,16 @@
         "probability": 0.10
     },
     "ShapeTransform": {
-        "scale": [0.3, 1.0],
+        "scale": [0.7, 1.0],
         "crop": [0.6, 1.0],
         "same_on_batch": false,
-        "probability": 0.3
+        "probability": 0.10
+    },
+    "AcqTransform": {
+        "scale": [0.01, 1.0],
+        "crop": [1.0, 1.0],
+        "same_on_batch": false,
+        "probability": 1
     },
     "FlipTransform": {
         "flip_axis": [0],

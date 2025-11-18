@@ -5,7 +5,7 @@ import torch
 
 from auglab.transforms.gpu.contrast import RandomConvTransformGPU, RandomGaussianNoiseGPU, RandomBrightnessGPU, RandomGammaGPU, RandomFunctionGPU, \
 RandomHistogramEqualizationGPU, RandomInverseGPU
-from auglab.transforms.gpu.spatial import RandomAffine3DCustom, RandomLowResTransformGPU, RandomFlipTransformGPU
+from auglab.transforms.gpu.spatial import RandomAffine3DCustom, RandomLowResTransformGPU, RandomFlipTransformGPU, RandomAcqTransformGPU
 from auglab.transforms.gpu.base import AugmentationSequentialCustom
 
 class AugTransformsGPU(AugmentationSequentialCustom):
@@ -131,6 +131,16 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 same_on_batch=shape_params.get('same_on_batch', False)
         ))
 
+        acq_params = self.transform_params.get('AcqTransform')
+        if acq_params is not None:
+            transforms.append(RandomAcqTransformGPU(
+                p=acq_params.get('probability', 0),
+                scale=acq_params.get('scale', [0.3, 1.0]),
+                crop=acq_params.get('crop', [1.0, 1.0]),
+                one_dim=True,
+                same_on_batch=acq_params.get('same_on_batch', False)
+        ))
+
         # Flipping transforms
         flip_params = self.transform_params.get('FlipTransform')
         if flip_params is not None:
@@ -222,11 +232,17 @@ if __name__ == "__main__":
     # Save the augmented images
     middle_slice = img_tensor_np.shape[2] // 2
     os.makedirs('img', exist_ok=True)
-    cv2.imwrite('img/augmented_img.png', augmented_img_np[0, 0, middle_slice])
-    cv2.imwrite('img/augmented_img2.png', augmented_img_np[1, 0, middle_slice])
-    cv2.imwrite('img/not_augmented_channel.png', augmented_img_np[0, 1, middle_slice]*255)
-    cv2.imwrite('img/img.png', img_tensor_np[0, 0, middle_slice])
-    cv2.imwrite('img/augmented_seg.png', augmented_seg_np[0, middle_slice]*255)
-    cv2.imwrite('img/seg.png', seg_tensor_np[0, middle_slice]*255)
+    cv2.imwrite('img/augmented_sag.png', augmented_img_np[0, 0, middle_slice])
+    cv2.imwrite('img/augmented_cor.png', augmented_img_np[0, 0, :, :, img_tensor_np.shape[4] // 2])
+    cv2.imwrite('img/augmented_ax.png', augmented_img_np[0, 0, :, img_tensor_np.shape[3] // 2, :])
+    cv2.imwrite('img/augmented_sag2.png', augmented_img_np[1, 0, middle_slice])
+    cv2.imwrite('img/not_augmented_channel_sag.png', augmented_img_np[0, 1, middle_slice]*255)
+    cv2.imwrite('img/not_augmented_channel_cor.png', augmented_img_np[0, 1, :, :, img_tensor_np.shape[4] // 2]*255)
+    cv2.imwrite('img/not_augmented_channel_ax.png', augmented_img_np[0, 1, :, img_tensor_np.shape[3] // 2, :]*255)
+    cv2.imwrite('img/img_sag.png', img_tensor_np[0, 0, middle_slice])
+    cv2.imwrite('img/img_cor.png', img_tensor_np[0, 0, :, :, img_tensor_np.shape[4] // 2])
+    cv2.imwrite('img/img_ax.png', img_tensor_np[0, 0, :, img_tensor_np.shape[3] // 2, :])
+    cv2.imwrite('img/augmented_seg_sag.png', augmented_seg_np[0, middle_slice]*255)
+    cv2.imwrite('img/seg_sag.png', seg_tensor_np[0, middle_slice]*255)
 
     print(augmentor)

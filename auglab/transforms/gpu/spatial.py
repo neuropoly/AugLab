@@ -10,6 +10,7 @@ import torch
 import torch.nn.functional as F
 
 from typing import Any, Dict, Optional, Tuple, Union
+from auglab.transforms.gpu.base import ImageOnlyTransform
 
 # Affine transform
 class RandomAffine3DCustom(RigidAffineAugmentationBase3D):
@@ -333,19 +334,35 @@ class ShapeGenerator3D(RandomGeneratorBase):
     def __init__(
             self, 
             scale: Tuple[float, float],
-            crop: Tuple[float, float]
+            crop: Tuple[float, float],
+            one_dim: bool = False
         ) -> None:
         super().__init__()
         self.scale = scale
         self.crop = crop
+        self.one_dim = one_dim
     
     def make_samplers(self, device: torch.device, dtype: torch.dtype) -> None:
         scale = _tuple_range_reader(self.scale, 3, device, dtype)
+        if self.one_dim:
+            # Pick a random dimension to apply scaling
+            dim = torch.randint(0, 3, (1,)).item()
+            for i in range(3):
+                if i != dim:
+                    scale[i, 0] = 1.0
+                    scale[i, 1] = 1.0
         self.scalex_sampler = UniformDistribution(scale[0, 0], scale[0, 1], validate_args=False)
         self.scaley_sampler = UniformDistribution(scale[1, 0], scale[1, 1], validate_args=False)
         self.scalez_sampler = UniformDistribution(scale[2, 0], scale[2, 1], validate_args=False)
 
         crop = _tuple_range_reader(self.crop, 3, device, dtype)
+        if self.one_dim:
+            # Pick a random dimension to apply cropping
+            dim = torch.randint(0, 3, (1,)).item()
+            for i in range(3):
+                if i != dim:
+                    crop[i, 0] = 1.0
+                    crop[i, 1] = 1.0
         self.cropx_sampler = UniformDistribution(crop[0, 0], crop[0, 1], validate_args=False)
         self.cropy_sampler = UniformDistribution(crop[1, 0], crop[1, 1], validate_args=False)
         self.cropz_sampler = UniformDistribution(crop[2, 0], crop[2, 1], validate_args=False)
@@ -369,6 +386,131 @@ class ShapeGenerator3D(RandomGeneratorBase):
             "scale": torch.as_tensor(scale, device=_device, dtype=_dtype),
             "crop": torch.as_tensor(crop, device=_device, dtype=_dtype)
         }
+
+# Acquisition transforms
+class RandomAcqTransformGPU(ImageOnlyTransform):
+    """
+    Randomly lower acquisition along one axes only.
+    """
+
+    def __init__(
+        self,
+        scale: Tuple[float, float] = (0.3, 1.0),
+        crop: Tuple[float, float] = (1.0, 1.0),
+        one_dim: bool = False,
+        same_on_batch: bool = False,
+        apply_to_channel: list[int] = [0],  # Apply to first channel by default
+        p: float = 1.0,
+        keepdim: bool = True,
+        **kwargs,
+    ) -> None:
+        super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
+        self.flags = {"resample": "trilinear"}
+        self.apply_to_channel = apply_to_channel
+        self._param_generator = ShapeGenerator3D(
+            scale=scale,
+            crop=crop,
+            one_dim=one_dim
+        )
+
+    @torch.no_grad()
+    def apply_transform(
+        self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
+    ) -> Tensor:
+        # input shape: (B, C, D, H, W)
+        if not isinstance(input, torch.Tensor):
+            raise TypeError(f"Expected input to be a Tensor. Got {type(input)}")
+
+        batch_size, C, D, H, W = input.shape
+
+        # params expected to contain 'scale' and 'crop' as tensors of shape (B, 3)
+        if params is None or 'scale' not in params or 'crop' not in params:
+            raise ValueError("params must contain 'scale' and 'crop' tensors")
+
+        scales = params['scale']  # shape [B, 3]
+        crops = params['crop']    # shape [B, 3]
+
+        resample = self.flags.get('resample', 'trilinear')
+
+        # Define interpolation modes
+        interp_down = resample
+        interp_up = resample
+
+
+        # Process per-channel and per-batch element
+        out = input.clone()
+        for b in range(batch_size):
+            # start from the original per-sample tensor so we only overwrite selected channels
+            canvas = input[b].clone()
+
+            for c in self.apply_to_channel:
+                x = input[b, c]  # [D, H, W]
+
+                sx, sy, sz = scales[b]
+                # compute downsampled size
+                down_D = max(1, int(round(float(sz) * D)))
+                down_H = max(1, int(round(float(sy) * H)))
+                down_W = max(1, int(round(float(sx) * W)))
+
+                # downsample
+                x_down = F.interpolate(
+                    x.unsqueeze(0).unsqueeze(0),
+                    size=(down_D, down_H, down_W),
+                    mode=interp_down,
+                    align_corners=False if 'linear' in interp_down else None,
+                )
+
+                # upsample back to original resolution
+                x_up = F.interpolate(
+                    x_down,
+                    size=(D, H, W),
+                    mode=interp_up,
+                    align_corners=False if 'linear' in interp_up else None,
+                ).squeeze(0).squeeze(0)  # [D, H, W]
+
+                # determine crop fraction and crop size on the upsampled image
+                cx, cy, cz = crops[b]
+                # interpret crop as fraction of upsampled size to keep
+                crop_D = max(1, int(round(float(cz) * D)))
+                crop_H = max(1, int(round(float(cy) * H)))
+                crop_W = max(1, int(round(float(cx) * W)))
+
+                # choose top-left-front corner within possible range (bias by crop fraction)
+                max_z = max(0, D - crop_D)
+                max_y = max(0, H - crop_H)
+                max_x = max(0, W - crop_W)
+
+                if max_z == 0:
+                    start_z = 0
+                else:
+                    start_z = int(round(float(cz) * max_z)) if max_z > 0 else 0
+                if max_y == 0:
+                    start_y = 0
+                else:
+                    start_y = int(round(float(cy) * max_y)) if max_y > 0 else 0
+                if max_x == 0:
+                    start_x = 0
+                else:
+                    start_x = int(round(float(cx) * max_x)) if max_x > 0 else 0
+
+                # crop patch from upsampled image (full resolution)
+                z1 = start_z
+                y1 = start_y
+                x1 = start_x
+                z2 = z1 + crop_D
+                y2 = y1 + crop_H
+                x2 = x1 + crop_W
+
+                patch = torch.zeros((D, H, W), dtype=x_up.dtype, device=x_up.device)
+                patch[z1:z2, y1:y2, x1:x2] = x_up[z1:z2, y1:y2, x1:x2]
+
+                # place patch back into the canvas for the correct channel only
+                canvas[c, z1:z2, y1:y2, x1:x2] = patch
+
+            out[b] = canvas
+
+        return out
+
 
 # Flip transforms
 class RandomFlipTransformGPU(RigidAffineAugmentationBase3D):
