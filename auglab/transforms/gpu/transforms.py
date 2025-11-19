@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch
 
 from auglab.transforms.gpu.contrast import RandomConvTransformGPU, RandomGaussianNoiseGPU, RandomBrightnessGPU, RandomGammaGPU, RandomFunctionGPU, \
-RandomHistogramEqualizationGPU, RandomInverseGPU
+RandomHistogramEqualizationGPU, RandomInverseGPU, RandomBiasFieldGPU
 from auglab.transforms.gpu.spatial import RandomAffine3DCustom, RandomLowResTransformGPU, RandomFlipTransformGPU, RandomAcqTransformGPU
 from auglab.transforms.gpu.base import AugmentationSequentialCustom
 
@@ -140,6 +140,15 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 one_dim=True,
                 same_on_batch=acq_params.get('same_on_batch', False)
         ))
+        
+        # Bias field artifact
+        bias_field_params = self.transform_params.get('BiasFieldTransform')
+        if bias_field_params is not None:
+            transforms.append(RandomBiasFieldGPU(
+                p=bias_field_params.get('probability', 0),
+                retain_stats=bias_field_params.get('retain_stats', False),
+                coefficients=bias_field_params.get('coefficients', 0.5),
+            ))
 
         # Flipping transforms
         flip_params = self.transform_params.get('FlipTransform')
