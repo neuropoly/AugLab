@@ -35,11 +35,11 @@ This repository contains:
    > **Note:** If you pull a new version from GitHub, make sure to rerun this command with the flag `--upgrade`
    - nnunetv2 only usage
    ```bash
-   python3 -m pip install -e auglab
+   python3 -m pip install -e .
    ```
    - full usage (with Monai and other dependencies)
    ```bash
-   python3 -m pip install -e auglab[all]
+   python3 -m pip install -e .[all]
    ```
 
 5. Install PyTorch following the instructions on their [website](https://pytorch.org/). Be sure to add the `--upgrade` flag to your installation command to replace any existing PyTorch installation.
