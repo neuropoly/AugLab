@@ -1,6 +1,6 @@
 [project]
 name = "auglab"
-version = "20250905"
+version = "20251119"
 requires-python = ">=3.10"
 description = "AugLab investigates the influence of different data augmentation strategies on MRI training performance."
 readme = "README.md"
@@ -52,3 +52,9 @@ repository = "https://github.com/neuropoly/AugLab"
 [build-system]
 requires = ["pip>=23", "setuptools>=67"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.package-data]
+'auglab' = ['data/**.json']
