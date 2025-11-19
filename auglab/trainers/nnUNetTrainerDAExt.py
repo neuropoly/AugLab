@@ -133,9 +133,10 @@ class nnUNetTrainerDAExt(nnUNetTrainer):
         transforms = []
 
         ### Adds transforms
+        # Load transform parameters from json file
         configs_path = importlib.resources.files(configs)
-        json_path = configs_path / "transform_params.json"
-        transforms.append(AugTransforms(json_path=str(json_path)))
+        json_path = os.environ.get("AUGLAB_PARAMS_CPU_JSON", str(configs_path / "transform_params.json"))
+        transforms.append(AugTransforms(json_path=json_path))
 
         ## Removed do_dummy_2d_data_aug
         
