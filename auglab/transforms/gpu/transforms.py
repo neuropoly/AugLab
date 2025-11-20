@@ -79,11 +79,13 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 retain_stats=gamma_params.get('retain_stats', False),
             ))
 
+        inv_gamma_params = self.transform_params.get('InvGammaTransform')
+        if inv_gamma_params is not None:
             transforms.append(RandomGammaGPU(
-                gamma_range=gamma_params.get('gamma_range', [0.7, 1.5]),
-                p=gamma_params.get('probability', 0),
+                gamma_range=inv_gamma_params.get('gamma_range', [0.7, 1.5]),
+                p=inv_gamma_params.get('probability', 0),
                 invert_image=True,
-                retain_stats=gamma_params.get('retain_stats', False),
+                retain_stats=inv_gamma_params.get('retain_stats', False),
             ))
 
         # Apply functions
