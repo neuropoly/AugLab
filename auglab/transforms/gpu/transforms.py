@@ -51,6 +51,17 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 sigma=unsharp_params.get('sigma', 1.0),
                 unsharp_amount=unsharp_params.get('unsharp_amount', 1.5),
         ))
+            
+        # RandomConv transform
+        randconv_params = self.transform_params.get('RandomConvTransform')
+        if randconv_params is not None:
+            transforms.append(RandomConvTransformGPU(
+                kernel_type=randconv_params.get('kernel_type', 'RandConv'),
+                p=randconv_params.get('probability', 0),
+                retain_stats=randconv_params.get('retain_stats', False),
+                kernel_sizes=randconv_params.get('kernel_sizes', [1,3,5,7]),
+                mix_prob=randconv_params.get('mix_prob', 0.0),
+        ))
 
         # Noise transforms
         noise_params = self.transform_params.get('GaussianNoiseTransform')

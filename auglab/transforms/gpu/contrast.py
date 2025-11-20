@@ -5,6 +5,8 @@ import torchvision.transforms._functional_tensor as F_t
 
 from typing import Any, Dict, Optional
 from kornia.core import Tensor
+import random
+import math
 
 from auglab.transforms.gpu.base import ImageOnlyTransform
 from typing import Any, Dict, Optional, Tuple, Union, List
@@ -36,8 +38,8 @@ class RandomConvTransformGPU(ImageOnlyTransform):
         **kwargs,
     ) -> None:
         super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
-        if kernel_type not in ["Laplace", "Scharr", "GaussianBlur", "UnsharpMask"]:
-            raise NotImplementedError('Currently only "Laplace", "Scharr", "GaussianBlur" and "UnsharpMask" are supported.')
+        if kernel_type not in ["Laplace", "Scharr", "GaussianBlur", "UnsharpMask", "RandConv"]:
+            raise NotImplementedError('Currently only "Laplace", "Scharr", "GaussianBlur", "UnsharpMask" and "RandConv" are supported.')
         else:
             self.kernel_type = kernel_type
         self.apply_to_channel = apply_to_channel
@@ -46,6 +48,9 @@ class RandomConvTransformGPU(ImageOnlyTransform):
         self.retain_stats = retain_stats
         # Unsharp mask parameters: amount controls strength of the mask
         self.unsharp_amount = kwargs.get('unsharp_amount', 1.0)
+        # RandConv parameters
+        self.kernel_sizes = kwargs.get("kernel_sizes", [1,3,5,7])  # multi-scale default
+        self.mix_prob = kwargs.get("mix_prob", 0.0)  # probability to mix with original
 
     def get_kernel(self, device: torch.device) -> torch.Tensor:
         if self.kernel_type == "Laplace":
@@ -97,6 +102,15 @@ class RandomConvTransformGPU(ImageOnlyTransform):
             sigma = torch.rand(3, device=device) * self.sigma
             kernel_size = 3
             kernel = get_gaussian_kernel3d(kernel_size, sigma, torch.float32, device)
+        elif self.kernel_type == "RandConv":
+            # choose random odd kernel size e.g. [1,3,5,7]
+            k = int(random.choice(self.kernel_sizes))  # define kernel_sizes in __init__
+
+            std = 1.0 / math.sqrt(k * k)
+            kernel = torch.randn(
+                (k, k, k),  # for 3D
+                device=device
+            ) * std
         else:
             raise NotImplementedError('Kernel type not implemented.')
         return kernel
@@ -133,6 +147,21 @@ class RandomConvTransformGPU(ImageOnlyTransform):
                     else:
                         tot_ += apply_convolution(channel_data, k, dim=3)
                 input[:, c] = tot_
+            elif self.kernel_type == 'RandConv':
+                # RandConv kernels are per-sample, per-call
+                out = []
+                for b in range(channel_data.shape[0]):
+                    kernel = self.get_kernel(device=input.device)
+
+                    conv = apply_convolution(channel_data[b:b+1], kernel, dim=3).squeeze(0)
+
+                    if torch.rand(1).item() < self.mix_prob:
+                        alpha = torch.rand(1, device=input.device)
+                        conv = alpha * channel_data[b] + (1 - alpha) * conv
+
+                    out.append(conv)
+
+                input[:, c] = torch.stack(out, dim=0)
             
             if self.retain_stats:
                 # Adjust mean and std to match original
