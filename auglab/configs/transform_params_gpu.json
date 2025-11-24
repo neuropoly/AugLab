@@ -40,6 +40,8 @@
     "InvGammaTransform": {
         "gamma_range": [0.7, 1.5],
         "retain_stats": false,
+        "probability": 0
+    },
     "ContrastTransform": {
         "contrast_range": [0.75, 1.25],
         "retain_stats": false,

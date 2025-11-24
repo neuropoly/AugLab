@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch
 
 from auglab.transforms.gpu.contrast import RandomConvTransformGPU, RandomGaussianNoiseGPU, RandomBrightnessGPU, RandomGammaGPU, RandomFunctionGPU, \
-RandomHistogramEqualizationGPU, RandomInverseGPU, RandomBiasFieldGPU
+RandomHistogramEqualizationGPU, RandomInverseGPU, RandomBiasFieldGPU, RandomContrastGPU
 from auglab.transforms.gpu.spatial import RandomAffine3DCustom, RandomLowResTransformGPU, RandomFlipTransformGPU, RandomAcqTransformGPU
 from auglab.transforms.gpu.base import AugmentationSequentialCustom
 
@@ -97,6 +97,15 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 p=inv_gamma_params.get('probability', 0),
                 invert_image=True,
                 retain_stats=inv_gamma_params.get('retain_stats', False),
+            ))
+        
+        # nnUNetV2 Contrast transforms
+        contrast_params = self.transform_params.get('ContrastTransform')
+        if contrast_params is not None:
+            transforms.append(RandomContrastGPU(
+                contrast_range=contrast_params.get('contrast_range', [0.75, 1.25]),
+                p=contrast_params.get('probability', 0),
+                retain_stats=contrast_params.get('retain_stats', False)
             ))
 
         # Apply functions
