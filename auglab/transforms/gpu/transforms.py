@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch
 
 from auglab.transforms.gpu.contrast import RandomConvTransformGPU, RandomGaussianNoiseGPU, RandomBrightnessGPU, RandomGammaGPU, RandomFunctionGPU, \
-RandomHistogramEqualizationGPU, RandomInverseGPU, RandomBiasFieldGPU
+RandomHistogramEqualizationGPU, RandomInverseGPU, RandomBiasFieldGPU, RandomContrastGPU
 from auglab.transforms.gpu.spatial import RandomAffine3DCustom, RandomLowResTransformGPU, RandomFlipTransformGPU, RandomAcqTransformGPU
 from auglab.transforms.gpu.base import AugmentationSequentialCustom
 
@@ -51,6 +51,17 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 sigma=unsharp_params.get('sigma', 1.0),
                 unsharp_amount=unsharp_params.get('unsharp_amount', 1.5),
         ))
+            
+        # RandomConv transform
+        randconv_params = self.transform_params.get('RandomConvTransform')
+        if randconv_params is not None:
+            transforms.append(RandomConvTransformGPU(
+                kernel_type=randconv_params.get('kernel_type', 'RandConv'),
+                p=randconv_params.get('probability', 0),
+                retain_stats=randconv_params.get('retain_stats', False),
+                kernel_sizes=randconv_params.get('kernel_sizes', [1,3,5,7]),
+                mix_prob=randconv_params.get('mix_prob', 0.0),
+        ))
 
         # Noise transforms
         noise_params = self.transform_params.get('GaussianNoiseTransform')
@@ -79,11 +90,22 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 retain_stats=gamma_params.get('retain_stats', False),
             ))
 
+        inv_gamma_params = self.transform_params.get('InvGammaTransform')
+        if inv_gamma_params is not None:
             transforms.append(RandomGammaGPU(
-                gamma_range=gamma_params.get('gamma_range', [0.7, 1.5]),
-                p=gamma_params.get('probability', 0),
+                gamma_range=inv_gamma_params.get('gamma_range', [0.7, 1.5]),
+                p=inv_gamma_params.get('probability', 0),
                 invert_image=True,
-                retain_stats=gamma_params.get('retain_stats', False),
+                retain_stats=inv_gamma_params.get('retain_stats', False),
+            ))
+        
+        # nnUNetV2 Contrast transforms
+        contrast_params = self.transform_params.get('ContrastTransform')
+        if contrast_params is not None:
+            transforms.append(RandomContrastGPU(
+                contrast_range=contrast_params.get('contrast_range', [0.75, 1.25]),
+                p=contrast_params.get('probability', 0),
+                retain_stats=contrast_params.get('retain_stats', False)
             ))
 
         # Apply functions
@@ -122,13 +144,13 @@ class AugTransformsGPU(AugmentationSequentialCustom):
         # Redistribute segmentation values (Not implemented on GPU yet)
 
         # Shape transforms (Cropping and Simulating low resolution)
-        shape_params = self.transform_params.get('ShapeTransform')
-        if shape_params is not None:
+        lowres_params = self.transform_params.get('SimulateLowResTransform')
+        if lowres_params is not None:
             transforms.append(RandomLowResTransformGPU(
-                p=shape_params.get('probability', 0),
-                scale=shape_params.get('scale', [0.3, 1.0]),
-                crop=shape_params.get('crop', [1.0, 1.0]),
-                same_on_batch=shape_params.get('same_on_batch', False)
+                p=lowres_params.get('probability', 0),
+                scale=lowres_params.get('scale', [0.3, 1.0]),
+                crop=lowres_params.get('crop', [1.0, 1.0]),
+                same_on_batch=lowres_params.get('same_on_batch', False)
         ))
 
         acq_params = self.transform_params.get('AcqTransform')

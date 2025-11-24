@@ -5,6 +5,8 @@ import torchvision.transforms._functional_tensor as F_t
 
 from typing import Any, Dict, Optional
 from kornia.core import Tensor
+import random
+import math
 
 from auglab.transforms.gpu.base import ImageOnlyTransform
 from typing import Any, Dict, Optional, Tuple, Union, List
@@ -36,8 +38,8 @@ class RandomConvTransformGPU(ImageOnlyTransform):
         **kwargs,
     ) -> None:
         super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
-        if kernel_type not in ["Laplace", "Scharr", "GaussianBlur", "UnsharpMask"]:
-            raise NotImplementedError('Currently only "Laplace", "Scharr", "GaussianBlur" and "UnsharpMask" are supported.')
+        if kernel_type not in ["Laplace", "Scharr", "GaussianBlur", "UnsharpMask", "RandConv"]:
+            raise NotImplementedError('Currently only "Laplace", "Scharr", "GaussianBlur", "UnsharpMask" and "RandConv" are supported.')
         else:
             self.kernel_type = kernel_type
         self.apply_to_channel = apply_to_channel
@@ -46,6 +48,9 @@ class RandomConvTransformGPU(ImageOnlyTransform):
         self.retain_stats = retain_stats
         # Unsharp mask parameters: amount controls strength of the mask
         self.unsharp_amount = kwargs.get('unsharp_amount', 1.0)
+        # RandConv parameters
+        self.kernel_sizes = kwargs.get("kernel_sizes", [1,3,5,7])  # multi-scale default
+        self.mix_prob = kwargs.get("mix_prob", 0.0)  # probability to mix with original
 
     def get_kernel(self, device: torch.device) -> torch.Tensor:
         if self.kernel_type == "Laplace":
@@ -97,6 +102,15 @@ class RandomConvTransformGPU(ImageOnlyTransform):
             sigma = torch.rand(3, device=device) * self.sigma
             kernel_size = 3
             kernel = get_gaussian_kernel3d(kernel_size, sigma, torch.float32, device)
+        elif self.kernel_type == "RandConv":
+            # choose random odd kernel size e.g. [1,3,5,7]
+            k = int(random.choice(self.kernel_sizes))  # define kernel_sizes in __init__
+
+            std = 1.0 / math.sqrt(k * k)
+            kernel = torch.randn(
+                (k, k, k),  # for 3D
+                device=device
+            ) * std
         else:
             raise NotImplementedError('Kernel type not implemented.')
         return kernel
@@ -133,6 +147,21 @@ class RandomConvTransformGPU(ImageOnlyTransform):
                     else:
                         tot_ += apply_convolution(channel_data, k, dim=3)
                 input[:, c] = tot_
+            elif self.kernel_type == 'RandConv':
+                # RandConv kernels are per-sample, per-call
+                out = []
+                for b in range(channel_data.shape[0]):
+                    kernel = self.get_kernel(device=input.device)
+
+                    conv = apply_convolution(channel_data[b:b+1], kernel, dim=3).squeeze(0)
+
+                    if torch.rand(1).item() < self.mix_prob:
+                        alpha = torch.rand(1, device=input.device)
+                        conv = alpha * channel_data[b] + (1 - alpha) * conv
+
+                    out.append(conv)
+
+                input[:, c] = torch.stack(out, dim=0)
             
             if self.retain_stats:
                 # Adjust mean and std to match original
@@ -405,6 +434,85 @@ class RandomGammaGPU(ImageOnlyTransform):
             
             if self.invert_image:
                 input[:, c] = -input[:, c]
+
+        return input
+
+## nnunetv2 contrast transform
+class RandomContrastGPU(ImageOnlyTransform):
+    """Apply random gamma adjustment to image.
+    If the image is torch Tensor, it is expected to have [N, C, X, Y] or [N, C, X, Y, Z] shape.
+
+    Args:
+        contrast_range (tuple of float): Range of gamma multipliers. Default is (0.9, 1.1).
+        apply_to_channel (list of int): List of channel indices to apply the gamma adjustment to. Default is [0].
+        retain_stats (bool): If True, retain the original mean and standard deviation of the image after gamma adjustment. Default is False.
+        same_on_batch (bool): Apply the same transformation across the batch. Default is False.
+        p (float): Probability of applying the transform. Default is 1.0.
+        keepdim (bool): Whether to keep the number of dimensions. Default is False.
+
+    Returns:
+        Tensor: Image with adjusted brightness.
+    """
+    
+    def __init__(
+        self,
+        contrast_range: list[float, float] = (0.9, 1.1),
+        apply_to_channel: list[int] = [0],  # Apply to first channel by default
+        retain_stats: bool = False,
+        same_on_batch: bool = False,
+        p: float = 1.0,
+        keepdim: bool = True,
+        **kwargs,
+    ) -> None:
+        super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
+        self.contrast_range = contrast_range
+        self.apply_to_channel = apply_to_channel
+        self.retain_stats = retain_stats
+
+    @torch.no_grad()  # disable gradients for efficiency
+    def apply_transform(
+        self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
+    ) -> Tensor:
+
+        # Apply brightness adjustment
+        for c in self.apply_to_channel:
+            channel_data = input[:, c]  # [N, ...spatial...]
+            if self.retain_stats:
+                reduce_dims = tuple(range(1, channel_data.dim()))
+                # store per-sample mean/std (shape [N])
+                orig_means = channel_data.mean(dim=reduce_dims)
+                orig_stds = channel_data.std(dim=reduce_dims)
+            
+            if self.same_on_batch:
+                factor = torch.rand(1, device=input.device, dtype=input.dtype) * (self.contrast_range[1] - self.contrast_range[0]) + self.contrast_range[0]
+                for i in range(input.shape[0]):
+                    mean = channel_data[i].mean()
+                    channel_data[i] -= mean
+                    channel_data[i] *= factor
+                    channel_data[i] += mean
+            else:
+                factor = torch.rand(input.shape[0], device=input.device, dtype=input.dtype) * (self.contrast_range[1] - self.contrast_range[0]) + self.contrast_range[0]
+                for i in range(input.shape[0]):
+                    mean = channel_data[i].mean()
+                    channel_data[i] -= mean
+                    channel_data[i] *= factor[i]
+                    channel_data[i] += mean
+            
+            if self.retain_stats:
+                # Adjust mean and std to match original
+                eps = 1e-8
+                reduce_dims = tuple(range(1, channel_data.dim()))
+                new_mean = channel_data.mean(dim=reduce_dims)  # [N]
+                new_std = channel_data.std(dim=reduce_dims)    # [N]
+                # reshape stats to broadcast over spatial dims: [N,1,1,...]
+                shape = [channel_data.shape[0]] + [1] * (channel_data.dim() - 1)
+                nm = new_mean.view(shape)
+                ns = new_std.view(shape)
+                om = orig_means.view(shape)
+                os = orig_stds.view(shape)
+                input[:, c] = (channel_data - nm) / (ns + eps) * os + om
+            else:
+                input[:, c] = channel_data
 
         return input
 
