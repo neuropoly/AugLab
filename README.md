@@ -35,7 +35,7 @@ This repository contains:
    > **Note:** If you pull a new version from GitHub, make sure to rerun this command with the flag `--upgrade`
    - nnunetv2 only usage
    ```bash
-   python3 -m pip install -e .
+   python3 -m pip install -e .[nnunetv2]
    ```
    - full usage (with Monai and other dependencies)
    ```bash
