@@ -28,6 +28,7 @@ import torch
 import importlib
 from torch import autocast
 import json
+import shutil
 
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
 from nnunetv2.utilities.helpers import dummy_context
@@ -165,6 +166,12 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
         json_path = os.environ.get("AUGLAB_PARAMS_GPU_JSON", str(configs_path / "transform_params_gpu.json"))
         self.transforms = AugTransformsGPU(json_path=json_path).to(self.device)
         print(f'Using AugLab GPU transforms with parameters from: {json_path}')
+
+        # Copy json transfrom parameters to output folder
+        shutil.copy(
+            json_path,
+            os.path.join(self.output_folder, 'transform_params_gpu_used_for_training.json')
+        )
 
     def configure_rotation_dummyDA_mirroring_and_inital_patch_size(self):
         rotation_for_DA, do_dummy_2d_data_aug, initial_patch_size, mirror_axes = \
