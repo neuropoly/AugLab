@@ -24,7 +24,8 @@
         "probability": 0.20
     },
     "RedistributeSegTransform": {
-        "retain_stats": false,
+        "in_seg": 0.5,
+        "retain_stats": true,
         "probability": 0.5
     },
     "GaussianNoiseTransform": {
