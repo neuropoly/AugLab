@@ -77,10 +77,10 @@
         "probability": 0.70
     },
     "FlipTransform": {
-        "flip_axis": [0],
+        "flip_axis": [2],
         "same_on_batch": false,
         "keepdim": true,
-        "probability": 0
+        "probability": 0.5
     },
     "AffineTransform": {
         "degrees": 30,
