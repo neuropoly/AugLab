@@ -23,6 +23,10 @@
         "mix_prob": 0.20,
         "probability": 0.20
     },
+    "RedistributeSegTransform": {
+        "retain_stats": false,
+        "probability": 0.5
+    },
     "GaussianNoiseTransform": {
         "mean": 0.0,
         "std": 0.1,

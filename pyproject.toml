@@ -1,6 +1,6 @@
 [project]
 name = "auglab"
-version = "20251124"
+version = "20251125"
 requires-python = ">=3.10"
 description = "AugLab investigates the influence of different data augmentation strategies on MRI training performance."
 readme = "README.md"
@@ -28,11 +28,11 @@ keywords = [
 ]
 dependencies = [
     "batchgeneratorsv2",
-    "nnunetv2",
     "kornia"
 ]
 
 [project.optional-dependencies]
+nnunetv2 = ["nnunetv2"]
 all = [
     "torchio",
     "monai[all]",

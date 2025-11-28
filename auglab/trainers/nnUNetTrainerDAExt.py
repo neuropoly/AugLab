@@ -27,11 +27,14 @@ import os
 import torch
 import importlib
 from torch import autocast
+import json
+import shutil
 
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
 from nnunetv2.utilities.helpers import dummy_context
 
 from auglab.transforms.cpu.transforms import AugTransforms
+from auglab.transforms.cpu.fromSeg import RedistributeTransform
 import auglab.configs as configs
 from auglab.transforms.gpu.transforms import AugTransformsGPU
 from auglab.trainers.utils import DownsampleSegForDSTransformCustom
@@ -164,6 +167,12 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
         self.transforms = AugTransformsGPU(json_path=json_path).to(self.device)
         print(f'Using AugLab GPU transforms with parameters from: {json_path}')
 
+        # Copy json transfrom parameters to output folder
+        shutil.copy(
+            json_path,
+            os.path.join(self.output_folder, 'transform_params_gpu_used_for_training.json')
+        )
+
     def configure_rotation_dummyDA_mirroring_and_inital_patch_size(self):
         rotation_for_DA, do_dummy_2d_data_aug, initial_patch_size, mirror_axes = \
             super().configure_rotation_dummyDA_mirroring_and_inital_patch_size()
@@ -187,6 +196,21 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
             retain_stats: bool = False
     ) -> BasicTransform:
         transforms = []
+
+        # Load transform parameters for CPU transforms
+        configs_path = importlib.resources.files(configs)
+        json_path = os.environ.get("AUGLAB_PARAMS_GPU_JSON", str(configs_path / "transform_params_gpu.json"))
+        with open(json_path, 'r') as f:
+            transform_params = json.load(f)
+
+        # Add redistribute segmentation transform
+        redisSeg_params = transform_params.get('RedistributeSegTransform')
+        if redisSeg_params is not None:
+            transforms.append(RandomTransform(
+                RedistributeTransform(
+                    retain_stats=redisSeg_params.get('retain_stats', False),
+                ), apply_probability=redisSeg_params.get('probability', 0.5),
+            ))
 
         ### Keep some nnunet transforms
         if do_dummy_2d_data_aug:
