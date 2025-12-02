@@ -60,17 +60,21 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
         # Apply per selected image channel and per batch sample
         for c in self.apply_to_channel:
             img_batch = input[:, c]  # (N, [...])
+            # Sanitize incoming values to prevent NaN/Inf propagation
+            img_batch = torch.nan_to_num(img_batch, nan=0.0, posinf=0.0, neginf=0.0)
 
             # Optionally retain original stats (vectorized per sample)
             if self.retain_stats:
                 flat = img_batch.view(N, -1)
                 orig_mean = flat.mean(dim=1)
-                orig_std = flat.std(dim=1)
+                # Use unbiased=False to avoid NaNs for tiny tensors
+                orig_std = flat.std(dim=1, unbiased=False)
 
             # Normalize entire batch to [0,1] per sample
             img_min = img_batch.view(N, -1).min(dim=1)[0].view(N, *([1] * (img_batch.dim()-1)))
             img_max = img_batch.view(N, -1).max(dim=1)[0].view(N, *([1] * (img_batch.dim()-1)))
-            x_batch = (img_batch - img_min) / (img_max - img_min + 1e-6)
+            denom = (img_max - img_min).clamp_min(1e-6)
+            x_batch = (img_batch - img_min) / denom
 
             # Iterate per sample (seg can differ in shape or labels per sample)
             for b in range(N):
@@ -83,7 +87,8 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
                     continue
 
                 # Decide redistribution mode once per sample
-                in_seg_bool = (1 - torch.rand(1, device=input.device)) <= self.in_seg
+                # Scalar random flag for redistribution mode
+                in_seg_bool = torch.rand((), device=input.device) <= self.in_seg
 
                 # Binary masks for regions
                 masks = seg_b.bool()  # (R, ...)
@@ -128,7 +133,7 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
                 # Build additive term
                 to_add = torch.zeros_like(x)
                 rand_sign = (2 * torch.rand(R, device=input.device) - 1)  # random sign factor per region
-                if in_seg_bool:
+                if in_seg_bool.item():
                     # Only inside region
                     for r in range(R):
                         if counts[r] == 0:  # skip empty
@@ -154,9 +159,13 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
                 # Restore stats
                 if self.retain_stats:
                     mean = x.mean()
-                    std = x.std()
+                    # Use unbiased=False to avoid NaNs on degenerate shapes
+                    std = x.std(unbiased=False)
                     x = (x - mean) / torch.clamp(std, min=1e-7)
                     x = x * orig_std[b] + orig_mean[b]
+
+                # Final safety: replace any remaining NaN/Inf
+                x = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
 
                 input[b, c] = x
 
