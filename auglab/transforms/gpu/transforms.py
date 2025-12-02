@@ -6,6 +6,7 @@ import torch
 from auglab.transforms.gpu.contrast import RandomConvTransformGPU, RandomGaussianNoiseGPU, RandomBrightnessGPU, RandomGammaGPU, RandomFunctionGPU, \
 RandomHistogramEqualizationGPU, RandomInverseGPU, RandomBiasFieldGPU, RandomContrastGPU
 from auglab.transforms.gpu.spatial import RandomAffine3DCustom, RandomLowResTransformGPU, RandomFlipTransformGPU, RandomAcqTransformGPU
+from auglab.transforms.gpu.fromSeg import RandomRedistributeSegGPU
 from auglab.transforms.gpu.base import AugmentationSequentialCustom
 
 class AugTransformsGPU(AugmentationSequentialCustom):
@@ -70,6 +71,15 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 mean=noise_params.get('mean', 0.0),
                 std=noise_params.get('std', 1.0),
                 p=noise_params.get('probability', 0),
+            ))
+        
+        # Redistribute segmentation values transform
+        redistribute_params = self.transform_params.get('RedistributeSegTransform')
+        if redistribute_params is not None:
+            transforms.append(RandomRedistributeSegGPU(
+                in_seg=redistribute_params.get('in_seg', 0.2),
+                retain_stats=redistribute_params.get('retain_stats', False),
+                p=redistribute_params.get('probability', 0),
             ))
 
         # Brightness transforms
