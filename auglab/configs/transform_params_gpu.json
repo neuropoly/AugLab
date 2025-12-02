@@ -24,7 +24,7 @@
         "probability": 0.20
     },
     "RedistributeSegTransform": {
-        "in_seg": 0.5,
+        "in_seg": 0.3,
         "retain_stats": true,
         "probability": 0.5
     },
