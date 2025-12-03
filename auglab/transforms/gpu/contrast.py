@@ -133,12 +133,12 @@ class RandomConvTransformGPU(ImageOnlyTransform):
                 orig_stds = channel_data.std(dim=reduce_dims)
             
             if self.kernel_type in ['Laplace', 'GaussianBlur']:
-                input[:, c] = apply_convolution(channel_data, kernel, dim=3)
+                x = apply_convolution(channel_data, kernel, dim=3)
             elif self.kernel_type == 'UnsharpMask':
                 # blur selected channel, compute mask and add scaled mask back Isharp​=I+α(I−G​∗I)
                 blurred = apply_convolution(channel_data, kernel, dim=3)
                 mask = channel_data - blurred
-                input[:, c] = channel_data + self.unsharp_amount * mask
+                x = channel_data + self.unsharp_amount * mask
             elif self.kernel_type == 'Scharr':
                 tot_ = torch.zeros_like(channel_data, device=input.device)
                 for k in kernel:
@@ -146,7 +146,7 @@ class RandomConvTransformGPU(ImageOnlyTransform):
                         tot_ += torch.abs(apply_convolution(channel_data, k, dim=3))
                     else:
                         tot_ += apply_convolution(channel_data, k, dim=3)
-                input[:, c] = tot_
+                x = tot_
             elif self.kernel_type == 'RandConv':
                 # RandConv kernels are per-sample, per-call
                 out = []
@@ -161,12 +161,11 @@ class RandomConvTransformGPU(ImageOnlyTransform):
 
                     out.append(conv)
 
-                input[:, c] = torch.stack(out, dim=0)
+                x = torch.stack(out, dim=0)
             
             if self.retain_stats:
                 # Adjust mean and std to match original
                 eps = 1e-8
-                x = input[:, c]
                 reduce_dims = tuple(range(1, x.dim()))
                 new_mean = x.mean(dim=reduce_dims)  # [N]
                 new_std = x.std(dim=reduce_dims)    # [N]
@@ -176,8 +175,12 @@ class RandomConvTransformGPU(ImageOnlyTransform):
                 ns = new_std.view(shape)
                 om = orig_means.view(shape)
                 os = orig_stds.view(shape)
-                input[:, c] = (x - nm) / (ns + eps) * os + om
-        
+                x = (x - nm) / (ns + eps) * os + om
+            
+            # Final safety: check if nan/inf appeared
+            if torch.isnan(x).any() or torch.isinf(x).any():
+                continue
+            input[:, c] = x
         return input
 
 def apply_convolution(img: torch.Tensor, kernel: torch.Tensor, dim: int) -> torch.Tensor:
@@ -289,6 +292,10 @@ class RandomGaussianNoiseGPU(ImageOnlyTransform):
                 noise = torch.randn_like(input[:,c], device=input.device, dtype=input.dtype)
                 for i in range(input.shape[0]):
                     noise[i] = noise[i] * std[i] + self.mean
+            
+            # Final safety: check if nan/inf appeared
+            if torch.isnan(noise).any() or torch.isinf(noise).any():
+                continue
             input[:, c] += noise
 
         return input
@@ -329,13 +336,18 @@ class RandomBrightnessGPU(ImageOnlyTransform):
 
         # Apply brightness adjustment
         for c in self.apply_to_channel:
+            channel_data = input[:, c]  # [N, ...spatial...]
             if self.same_on_batch:
                 factor = torch.rand(1, device=input.device, dtype=input.dtype) * (self.brightness_range[1] - self.brightness_range[0]) + self.brightness_range[0]
-                input[:, c] *= factor
+                channel_data *= factor
             else:
                 factor = torch.rand(input.shape[0], device=input.device, dtype=input.dtype) * (self.brightness_range[1] - self.brightness_range[0]) + self.brightness_range[0]
                 for i in range(input.shape[0]):
-                    input[i, c] *= factor[i]
+                    channel_data[i] *= factor[i]
+            # Final safety: check if nan/inf appeared
+            if torch.isnan(channel_data).any() or torch.isinf(channel_data).any():
+                continue
+            input[:, c] = channel_data
         return input
 
 ## Gamma transform
@@ -428,12 +440,14 @@ class RandomGammaGPU(ImageOnlyTransform):
                 ns = new_std.view(shape)
                 om = orig_means.view(shape)
                 os = orig_stds.view(shape)
-                input[:, c] = (channel_data - nm) / (ns + eps) * os + om
-            else:
-                input[:, c] = channel_data
+                channel_data = (channel_data - nm) / (ns + eps) * os + om
             
             if self.invert_image:
-                input[:, c] = -input[:, c]
+                channel_data = -channel_data
+            # Final safety: check if nan/inf appeared
+            if torch.isnan(channel_data).any() or torch.isinf(channel_data).any():
+                continue
+            input[:, c] = channel_data
 
         return input
 
@@ -510,9 +524,11 @@ class RandomContrastGPU(ImageOnlyTransform):
                 ns = new_std.view(shape)
                 om = orig_means.view(shape)
                 os = orig_stds.view(shape)
-                input[:, c] = (channel_data - nm) / (ns + eps) * os + om
-            else:
-                input[:, c] = channel_data
+                channel_data = (channel_data - nm) / (ns + eps) * os + om
+            # Final safety: check if nan/inf appeared
+            if torch.isnan(channel_data).any() or torch.isinf(channel_data).any():
+                continue
+            input[:, c] = channel_data
 
         return input
 
@@ -580,9 +596,11 @@ class RandomFunctionGPU(ImageOnlyTransform):
                 ns = new_std.view(shape)
                 om = orig_means.view(shape)
                 os = orig_stds.view(shape)
-                input[:, c] = (x - nm) / (ns + eps) * os + om
-            else:
-                input[:, c] = x
+                x = (x - nm) / (ns + eps) * os + om
+            # Final safety: check if nan/inf appeared
+            if torch.isnan(x).any() or torch.isinf(x).any():
+                continue
+            input[:, c] = x
         
         return input
 
@@ -633,7 +651,12 @@ class RandomInverseGPU(ImageOnlyTransform):
                     eps = 1e-8
                     new_mean = x.mean()  # scalar
                     new_std = x.std()    # scalar
-                    input[i, c] = (x - new_mean) / (new_std + eps) * orig_stds + orig_means
+                    x = (x - new_mean) / (new_std + eps) * orig_stds + orig_means
+                # Final safety: check if nan/inf appeared
+                if torch.isnan(x).any() or torch.isinf(x).any():
+                    continue
+                input[i, c] = x
+
         return input
 
 ## Histogram transform
@@ -718,9 +741,11 @@ class RandomHistogramEqualizationGPU(ImageOnlyTransform):
                 ns = new_std.view(shape)
                 om = orig_means.view(shape)
                 os = orig_stds.view(shape)
-                input[:, c] = (channel_data - nm) / (ns + eps) * os + om
-            else:
-                input[:, c] = channel_data
+                channel_data = (channel_data - nm) / (ns + eps) * os + om
+            # Final safety: check if nan/inf appeared
+            if torch.isnan(channel_data).any() or torch.isinf(channel_data).any():
+                continue
+            input[:, c] = channel_data
         
         return input
 
@@ -889,6 +914,9 @@ class RandomBiasFieldGPU(ImageOnlyTransform):
                 nm = new_mean.view(shape)
                 ns = new_std.view(shape)
                 channel = (channel - nm) / (ns + eps) * os + om
+            # Final safety: check if nan/inf appeared
+            if torch.isnan(channel).any() or torch.isinf(channel).any():
+                continue
             input[:, c] = channel
 
         return input
