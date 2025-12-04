@@ -7,12 +7,12 @@
     },
     "GaussianBlurTransform": {
         "kernel_type": "GaussianBlur",
-        "sigma": 1.5,
+        "sigma": 1.0,
         "probability": 0.10
     },
     "UnsharpMaskTransform": {
         "kernel_type": "UnsharpMask",
-        "sigma": 1.5,
+        "sigma": 1.0,
         "unsharp_amount": 1,
         "probability": 0.10
     },
@@ -39,12 +39,12 @@
     },
     "GammaTransform": {
         "gamma_range": [0.7, 1.5],
-        "retain_stats": false,
+        "retain_stats": true,
         "probability": 0.30
     },
     "InvGammaTransform": {
         "gamma_range": [0.7, 1.5],
-        "retain_stats": false,
+        "retain_stats": true,
         "probability": 0.10
     },
     "ContrastTransform": {
@@ -71,14 +71,14 @@
         "probability": 0.25
     },
     "AcqTransform": {
-        "scale": [0.05, 1.0],
+        "scale": [0.2, 1.0],
         "crop": [1.0, 1.0],
         "same_on_batch": false,
         "probability": 0.40
     },
     "BiasFieldTransform": {
-        "retain_stats": false,
-        "coefficients": 1,
+        "retain_stats": true,
+        "coefficients": 0.5,
         "probability": 0.20
     },
     "FlipTransform": {
