@@ -179,6 +179,7 @@ class RandomConvTransformGPU(ImageOnlyTransform):
             
             # Final safety: check if nan/inf appeared
             if torch.isnan(x).any() or torch.isinf(x).any():
+                print(f"Warning nan: {self.__class__.__name__} with kernel={self.kernel_type}", flush=True)
                 continue
             input[:, c] = x
         return input
@@ -295,6 +296,7 @@ class RandomGaussianNoiseGPU(ImageOnlyTransform):
             
             # Final safety: check if nan/inf appeared
             if torch.isnan(noise).any() or torch.isinf(noise).any():
+                print(f"Warning nan: {self.__class__.__name__}", flush=True)
                 continue
             input[:, c] += noise
 
@@ -346,6 +348,7 @@ class RandomBrightnessGPU(ImageOnlyTransform):
                     channel_data[i] *= factor[i]
             # Final safety: check if nan/inf appeared
             if torch.isnan(channel_data).any() or torch.isinf(channel_data).any():
+                print(f"Warning nan: {self.__class__.__name__}", flush=True)
                 continue
             input[:, c] = channel_data
         return input
@@ -446,6 +449,7 @@ class RandomGammaGPU(ImageOnlyTransform):
                 channel_data = -channel_data
             # Final safety: check if nan/inf appeared
             if torch.isnan(channel_data).any() or torch.isinf(channel_data).any():
+                print(f"Warning nan: {self.__class__.__name__}", flush=True)
                 continue
             input[:, c] = channel_data
 
@@ -527,6 +531,7 @@ class RandomContrastGPU(ImageOnlyTransform):
                 channel_data = (channel_data - nm) / (ns + eps) * os + om
             # Final safety: check if nan/inf appeared
             if torch.isnan(channel_data).any() or torch.isinf(channel_data).any():
+                print(f"Warning nan: {self.__class__.__name__}", flush=True)
                 continue
             input[:, c] = channel_data
 
@@ -599,6 +604,7 @@ class RandomFunctionGPU(ImageOnlyTransform):
                 x = (x - nm) / (ns + eps) * os + om
             # Final safety: check if nan/inf appeared
             if torch.isnan(x).any() or torch.isinf(x).any():
+                print(f"Warning nan: {self.__class__.__name__}", flush=True)
                 continue
             input[:, c] = x
         
@@ -654,6 +660,7 @@ class RandomInverseGPU(ImageOnlyTransform):
                     x = (x - new_mean) / (new_std + eps) * orig_stds + orig_means
                 # Final safety: check if nan/inf appeared
                 if torch.isnan(x).any() or torch.isinf(x).any():
+                    print(f"Warning nan: {self.__class__.__name__}", flush=True)
                     continue
                 input[i, c] = x
 
@@ -744,6 +751,7 @@ class RandomHistogramEqualizationGPU(ImageOnlyTransform):
                 channel_data = (channel_data - nm) / (ns + eps) * os + om
             # Final safety: check if nan/inf appeared
             if torch.isnan(channel_data).any() or torch.isinf(channel_data).any():
+                print(f"Warning nan: {self.__class__.__name__}", flush=True)
                 continue
             input[:, c] = channel_data
         
@@ -916,6 +924,7 @@ class RandomBiasFieldGPU(ImageOnlyTransform):
                 channel = (channel - nm) / (ns + eps) * os + om
             # Final safety: check if nan/inf appeared
             if torch.isnan(channel).any() or torch.isinf(channel).any():
+                print(f"Warning nan: {self.__class__.__name__}", flush=True)
                 continue
             input[:, c] = channel
 
