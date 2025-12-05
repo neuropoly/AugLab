@@ -2,6 +2,7 @@ import os, json
 
 import torch.nn as nn
 import torch
+import numpy as np
 
 from auglab.transforms.gpu.contrast import RandomConvTransformGPU, RandomGaussianNoiseGPU, RandomBrightnessGPU, RandomGammaGPU, RandomFunctionGPU, \
 RandomHistogramEqualizationGPU, RandomInverseGPU, RandomBiasFieldGPU, RandomContrastGPU
@@ -24,46 +25,6 @@ class AugTransformsGPU(AugmentationSequentialCustom):
     def _build_transforms(self) -> list[nn.Module]:
         transforms = []
 
-        # Scharr filter
-        scharr_params = self.transform_params.get('ScharrTransform')
-        if scharr_params is not None:
-            transforms.append(RandomConvTransformGPU(
-                kernel_type=scharr_params.get('kernel_type', 'Scharr'),
-                p=scharr_params.get('probability', 0),
-                retain_stats=scharr_params.get('retain_stats', True),
-                absolute=scharr_params.get('absolute', True),
-            ))
-
-        # Gaussian blur
-        gaussianblur_params = self.transform_params.get('GaussianBlurTransform')
-        if gaussianblur_params is not None:
-            transforms.append(RandomConvTransformGPU(
-                kernel_type=gaussianblur_params.get('kernel_type', 'GaussianBlur'),
-                p=gaussianblur_params.get('probability', 0),
-                sigma=gaussianblur_params.get('sigma', 1.0),
-            ))
-
-        # Unsharp masking
-        unsharp_params = self.transform_params.get('UnsharpMaskTransform')
-        if unsharp_params is not None:
-            transforms.append(RandomConvTransformGPU(
-                kernel_type=unsharp_params.get('kernel_type', 'UnsharpMask'),
-                p=unsharp_params.get('probability', 0),
-                sigma=unsharp_params.get('sigma', 1.0),
-                unsharp_amount=unsharp_params.get('unsharp_amount', 1.5),
-        ))
-            
-        # RandomConv transform
-        randconv_params = self.transform_params.get('RandomConvTransform')
-        if randconv_params is not None:
-            transforms.append(RandomConvTransformGPU(
-                kernel_type=randconv_params.get('kernel_type', 'RandConv'),
-                p=randconv_params.get('probability', 0),
-                retain_stats=randconv_params.get('retain_stats', False),
-                kernel_sizes=randconv_params.get('kernel_sizes', [1,3,5,7]),
-                mix_prob=randconv_params.get('mix_prob', 0.0),
-        ))
-
         # Noise transforms
         noise_params = self.transform_params.get('GaussianNoiseTransform')
         if noise_params is not None:
@@ -73,13 +34,13 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 p=noise_params.get('probability', 0),
             ))
         
-        # Redistribute segmentation values transform
-        redistribute_params = self.transform_params.get('RedistributeSegTransform')
-        if redistribute_params is not None:
-            transforms.append(RandomRedistributeSegGPU(
-                in_seg=redistribute_params.get('in_seg', 0.2),
-                retain_stats=redistribute_params.get('retain_stats', False),
-                p=redistribute_params.get('probability', 0),
+        # Gaussian blur
+        gaussianblur_params = self.transform_params.get('GaussianBlurTransform')
+        if gaussianblur_params is not None:
+            transforms.append(RandomConvTransformGPU(
+                kernel_type=gaussianblur_params.get('kernel_type', 'GaussianBlur'),
+                p=gaussianblur_params.get('probability', 0),
+                sigma=gaussianblur_params.get('sigma', 1.0),
             ))
 
         # Brightness transforms
@@ -150,8 +111,6 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 p=histo_params.get('probability', 0),
                 retain_stats=histo_params.get('retain_stats', False),
             ))
-        
-        # Redistribute segmentation values (Not implemented on GPU yet)
 
         # Shape transforms (Cropping and Simulating low resolution)
         lowres_params = self.transform_params.get('SimulateLowResTransform')
@@ -181,6 +140,15 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 retain_stats=bias_field_params.get('retain_stats', False),
                 coefficients=bias_field_params.get('coefficients', 0.5),
             ))
+        
+        # Redistribute segmentation values transform
+        redistribute_params = self.transform_params.get('RedistributeSegTransform')
+        if redistribute_params is not None:
+            transforms.append(RandomRedistributeSegGPU(
+                in_seg=redistribute_params.get('in_seg', 0.2),
+                retain_stats=redistribute_params.get('retain_stats', False),
+                p=redistribute_params.get('probability', 0),
+            ))
 
         # Flipping transforms
         flip_params = self.transform_params.get('FlipTransform')
@@ -208,7 +176,47 @@ class AugTransformsGPU(AugmentationSequentialCustom):
 
         # Elastic transforms (Not implemented on GPU yet)
 
+        # Scharr filter
+        scharr_params = self.transform_params.get('ScharrTransform')
+        if scharr_params is not None:
+            transforms.append(RandomConvTransformGPU(
+                kernel_type=scharr_params.get('kernel_type', 'Scharr'),
+                p=scharr_params.get('probability', 0),
+                retain_stats=scharr_params.get('retain_stats', True),
+                absolute=scharr_params.get('absolute', True),
+            ))
+
+        # Unsharp masking
+        unsharp_params = self.transform_params.get('UnsharpMaskTransform')
+        if unsharp_params is not None:
+            transforms.append(RandomConvTransformGPU(
+                kernel_type=unsharp_params.get('kernel_type', 'UnsharpMask'),
+                p=unsharp_params.get('probability', 0),
+                sigma=unsharp_params.get('sigma', 1.0),
+                unsharp_amount=unsharp_params.get('unsharp_amount', 1.5),
+        ))
+            
+        # RandomConv transform
+        randconv_params = self.transform_params.get('RandomConvTransform')
+        if randconv_params is not None:
+            transforms.append(RandomConvTransformGPU(
+                kernel_type=randconv_params.get('kernel_type', 'RandConv'),
+                p=randconv_params.get('probability', 0),
+                retain_stats=randconv_params.get('retain_stats', False),
+                kernel_sizes=randconv_params.get('kernel_sizes', [1,3,5,7]),
+                mix_prob=randconv_params.get('mix_prob', 0.0),
+        ))
+
         return transforms
+
+def normalize(arr: np.ndarray) -> np.ndarray:
+    """
+    Normalize a tensor to the range [0, 1].
+    """
+    min_val = np.min(arr)
+    max_val = np.max(arr)
+    normalized_arr = (arr - min_val) / (max_val - min_val + 1e-8)
+    return normalized_arr
 
 if __name__ == "__main__":
     # Example usage
@@ -273,10 +281,10 @@ if __name__ == "__main__":
     # Save the augmented images
     middle_slice = img_tensor_np.shape[2] // 2
     os.makedirs('img', exist_ok=True)
-    cv2.imwrite('img/augmented_sag.png', augmented_img_np[0, 0, middle_slice])
-    cv2.imwrite('img/augmented_cor.png', augmented_img_np[0, 0, :, :, img_tensor_np.shape[4] // 2])
-    cv2.imwrite('img/augmented_ax.png', augmented_img_np[0, 0, :, img_tensor_np.shape[3] // 2, :])
-    cv2.imwrite('img/augmented_sag2.png', augmented_img_np[1, 0, middle_slice])
+    cv2.imwrite('img/augmented_sag.png', normalize(augmented_img_np[0, 0, middle_slice])*255)
+    cv2.imwrite('img/augmented_cor.png', normalize(augmented_img_np[0, 0, :, :, img_tensor_np.shape[4] // 2])*255)
+    cv2.imwrite('img/augmented_ax.png', normalize(augmented_img_np[0, 0, :, img_tensor_np.shape[3] // 2, :])*255)
+    cv2.imwrite('img/augmented_sag2.png', normalize(augmented_img_np[1, 0, middle_slice])*255)
     cv2.imwrite('img/not_augmented_channel_sag.png', augmented_img_np[0, 1, middle_slice]*255)
     cv2.imwrite('img/not_augmented_channel_cor.png', augmented_img_np[0, 1, :, :, img_tensor_np.shape[4] // 2]*255)
     cv2.imwrite('img/not_augmented_channel_ax.png', augmented_img_np[0, 1, :, img_tensor_np.shape[3] // 2, :]*255)

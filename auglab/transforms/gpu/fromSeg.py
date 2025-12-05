@@ -164,9 +164,10 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
                     x = (x - mean) / torch.clamp(std, min=1e-7)
                     x = x * orig_std[b] + orig_mean[b]
 
-                # Final safety: replace any remaining NaN/Inf
-                x = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
-
+                # Final safety: check if nan/inf appeared
+                if torch.isnan(x).any() or torch.isinf(x).any():
+                    print(f"Warning nan: {self.__class__.__name__}", flush=True)
+                    continue
                 input[b, c] = x
 
         return input
