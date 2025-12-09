@@ -5,7 +5,7 @@ import torch
 import numpy as np
 
 from auglab.transforms.gpu.contrast import RandomConvTransformGPU, RandomGaussianNoiseGPU, RandomBrightnessGPU, RandomGammaGPU, RandomFunctionGPU, \
-RandomHistogramEqualizationGPU, RandomInverseGPU, RandomBiasFieldGPU, RandomContrastGPU
+RandomHistogramEqualizationGPU, RandomInverseGPU, RandomBiasFieldGPU, RandomContrastGPU, ZscoreNormalizationGPU
 from auglab.transforms.gpu.spatial import RandomAffine3DCustom, RandomLowResTransformGPU, RandomFlipTransformGPU, RandomAcqTransformGPU
 from auglab.transforms.gpu.fromSeg import RandomRedistributeSegGPU
 from auglab.transforms.gpu.base import AugmentationSequentialCustom
@@ -206,6 +206,9 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 kernel_sizes=randconv_params.get('kernel_sizes', [1,3,5,7]),
                 mix_prob=randconv_params.get('mix_prob', 0.0),
         ))
+        
+        # Z-score normalization
+        transforms.append(ZscoreNormalizationGPU())
 
         return transforms
 

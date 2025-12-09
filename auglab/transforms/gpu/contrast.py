@@ -930,3 +930,47 @@ class RandomBiasFieldGPU(ImageOnlyTransform):
 
         return input
 
+class ZscoreNormalizationGPU(ImageOnlyTransform):
+    """Apply z-score normalization to selected channels.
+
+    Args:
+        apply_to_channel (list[int]): Channels to which the normalization is applied.
+        p (float): Application probability.
+        keepdim (bool): Keep input dimensions flag (passed to base).
+    """
+
+    def __init__(
+        self,
+        apply_to_channel: list[int] = [0],
+        keepdim: bool = True,
+        **kwargs,
+    ) -> None:
+        super().__init__(p=1.0, same_on_batch=False, keepdim=keepdim)
+        self.apply_to_channel = apply_to_channel
+
+    @torch.no_grad()
+    def apply_transform(
+        self,
+        input: Tensor,
+        params: Dict[str, Tensor],
+        flags: Dict[str, Any],
+        transform: Optional[Tensor] = None,
+    ) -> Tensor:
+        # input: (N, C, [D,] H, W)
+        for c in self.apply_to_channel:
+            if c < 0 or c >= input.shape[1]:
+                continue  # skip invalid channel index
+            channel = input[:, c]
+            reduce_dims = tuple(range(1, channel.dim()))
+            mean = channel.mean(dim=reduce_dims, keepdim=True)
+            # use unbiased=False for stability, and clamp std to avoid division by ~0
+            std = channel.std(dim=reduce_dims, keepdim=True, unbiased=False).clamp_min(1e-8)
+            channel = (channel - mean) / std
+            # Final safety: check if nan/inf appeared
+            if torch.isnan(channel).any() or torch.isinf(channel).any():
+                print(f"Warning nan: {self.__class__.__name__}", flush=True)
+                continue
+            input[:, c] = channel
+
+        return input
+
