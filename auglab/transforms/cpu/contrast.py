@@ -241,3 +241,17 @@ def apply_filter(x: torch.Tensor, kernel: torch.Tensor, **kwargs) -> torch.Tenso
         kwargs["stride"] = 1
     output = conv(x, kernel, groups=kernel.shape[0], bias=None, **kwargs)
     return output.view(batch, chns, *output.shape[2:])
+
+class ZscoreNormalization(ImageOnlyTransform):
+    '''
+    Z-score normalization of image
+    '''
+    def __init__(self) -> None:
+        super().__init__()
+
+    def _apply_to_image(self, img: torch.Tensor, **params) -> torch.Tensor:
+        for c in range(1):
+            mean = torch.mean(img[c])
+            std = torch.std(img[c])
+            img[c] = (img[c] - mean)/torch.clamp(std, min=1e-8)
+        return img

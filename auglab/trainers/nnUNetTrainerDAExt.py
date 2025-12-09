@@ -34,7 +34,7 @@ from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
 from nnunetv2.utilities.helpers import dummy_context
 
 from auglab.transforms.cpu.transforms import AugTransforms
-from auglab.transforms.cpu.fromSeg import RedistributeTransform
+from auglab.transforms.cpu.contrast import ZscoreNormalization
 import auglab.configs as configs
 from auglab.transforms.gpu.transforms import AugTransformsGPU
 from auglab.trainers.utils import DownsampleSegForDSTransformCustom
@@ -273,11 +273,50 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
                     channel_in_seg=0
                 )
             )
+        
+        transforms.append(ZscoreNormalization())
 
         # NOTE: DownsampleSegForDSTransform is now handled in train_step for GPU augmentations
         # if deep_supervision_scales is not None:
         #     transforms.append(DownsampleSegForDSTransform(ds_scales=deep_supervision_scales))
 
+        return ComposeTransforms(transforms)
+
+    @staticmethod
+    def get_validation_transforms(
+            deep_supervision_scales: Union[List, Tuple, None],
+            is_cascaded: bool = False,
+            foreground_labels: Union[Tuple[int, ...], List[int]] = None,
+            regions: List[Union[List[int], Tuple[int, ...], int]] = None,
+            ignore_label: int = None,
+    ) -> BasicTransform:
+        transforms = []
+        transforms.append(
+            RemoveLabelTansform(-1, 0)
+        )
+
+        if is_cascaded:
+            transforms.append(
+                MoveSegAsOneHotToDataTransform(
+                    source_channel_idx=1,
+                    all_labels=foreground_labels,
+                    remove_channel_from_source=True
+                )
+            )
+
+        if regions is not None:
+            # the ignore label must also be converted
+            transforms.append(
+                ConvertSegmentationToRegionsTransform(
+                    regions=list(regions) + [ignore_label] if ignore_label is not None else regions,
+                    channel_in_seg=0
+                )
+            )
+        
+        transforms.append(ZscoreNormalization())
+
+        if deep_supervision_scales is not None:
+            transforms.append(DownsampleSegForDSTransform(ds_scales=deep_supervision_scales))
         return ComposeTransforms(transforms)
     
     def train_step(self, batch: dict) -> dict:
