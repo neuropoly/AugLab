@@ -5,12 +5,22 @@
         "retain_stats": false,
         "probability": 0.15
     },
-    "FunctionTransform": {
-        "retain_stats": false,
-        "probability": 0.05
+    "GaussianBlurTransform": {
+        "kernel_type": "GaussianBlur",
+        "sigma": 1.0,
+        "probability": 0.10
     },
-    "HistogramEqualizationTransform": {
+    "UnsharpMaskTransform": {
+        "kernel_type": "UnsharpMask",
+        "sigma": 1.0,
+        "unsharp_amount": 1,
+        "probability": 0.10
+    },
+    "RandomConvTransform": {
+        "kernel_type": "RandConv",
+        "kernel_sizes": [1,3,5,7],
         "retain_stats": false,
+        "mix_prob": 0.20,
         "probability": 0.10
     },
     "RedistributeSegTransform": {
@@ -18,8 +28,50 @@
         "retain_stats": false,
         "probability": 0.5
     },
+    "GaussianNoiseTransform": {
+        "mean": 0.0,
+        "std": 0.1,
+        "probability": 0.10
+    },
+    "BrightnessTransform": {
+        "brightness_range": [0.75, 1.25],
+        "probability": 0.15
+    },
+    "GammaTransform": {
+        "gamma_range": [0.7, 1.5],
+        "retain_stats": true,
+        "probability": 0.30
+    },
+    "InvGammaTransform": {
+        "gamma_range": [0.7, 1.5],
+        "retain_stats": true,
+        "probability": 0.10
+    },
+    "ContrastTransform": {
+        "contrast_range": [0.75, 1.25],
+        "retain_stats": false,
+        "probability": 0.15
+    },
+    "FunctionTransform": {
+        "retain_stats": false,
+        "probability": 0.05
+    },
+    "InverseTransform": {
+        "retain_stats": false,
+        "probability": 0.30
+    },
+    "HistogramEqualizationTransform": {
+        "retain_stats": false,
+        "probability": 0.20
+    },
+    "SimulateLowResTransform": {
+        "scale": [0.5, 1.0],
+        "crop": [0.8, 1.0],
+        "same_on_batch": false,
+        "probability": 0.25
+    },
     "AcqTransform": {
-        "scale": [0.1, 1.0],
+        "scale": [0.2, 1.0],
         "crop": [1.0, 1.0],
         "same_on_batch": false,
         "probability": 0.40
@@ -27,7 +79,13 @@
     "BiasFieldTransform": {
         "retain_stats": false,
         "coefficients": 0.5,
-        "probability": 0.15
+        "probability": 0.20
+    },
+    "FlipTransform": {
+        "flip_axis": [0],
+        "same_on_batch": false,
+        "keepdim": true,
+        "probability": 0
     },
     "AffineTransform": {
         "degrees": 10,
@@ -36,63 +94,5 @@
         "shear": [-10, 10, -10, 10, -10, 10],
         "resample": "bilinear",
         "probability": 0.5
-    },
-    "GaussianNoiseTransform": {
-        "mean": 0.0,
-        "std": 0.1,
-        "probability": 0.10
-    },
-    "GaussianBlurTransform": {
-        "kernel_type": "GaussianBlur",
-        "sigma": 1.0,
-        "probability": 0.10
-    },
-    "BrightnessTransform": {
-        "brightness_range": [0.75, 1.25],
-        "probability": 0.15
-    },
-    "ContrastTransform": {
-        "contrast_range": [0.75, 1.25],
-        "retain_stats": true,
-        "probability": 0.15
-    },
-    "SimulateLowResTransform": {
-        "scale": [0.3, 1.0],
-        "crop": [1.0, 1.0],
-        "same_on_batch": false,
-        "probability": 0.10
-    },
-    "InvGammaTransform": {
-        "gamma_range": [0.7, 1.5],
-        "retain_stats": true,
-        "probability": 0.10
-    },
-    "GammaTransform": {
-        "gamma_range": [0.7, 1.5],
-        "retain_stats": true,
-        "probability": 0.30
-    },
-    "FlipTransform": {
-        "flip_axis": [0],
-        "same_on_batch": false,
-        "keepdim": true,
-        "probability": 0
-    },
-    "InverseTransform": {
-        "retain_stats": false,
-        "probability": 0
-    },
-    "UnsharpMaskTransform": {
-        "kernel_type": "UnsharpMask",
-        "sigma": 1.0,
-        "unsharp_amount": 1,
-        "probability": 0
-    },
-    "RandomConvTransform": {
-        "kernel_type": "RandConv",
-        "kernel_sizes": [1,3,5,7],
-        "retain_stats": false,
-        "mix_prob": 0.20,
-        "probability": 0
     }
 }
