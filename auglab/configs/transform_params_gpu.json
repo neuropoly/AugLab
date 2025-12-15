@@ -3,7 +3,7 @@
         "kernel_type": "Scharr",
         "absolute": true,
         "retain_stats": true,
-		"mix_prob": 0.50,
+		"mix_prob": 0.90,
         "probability": 0.15
     },
     "GaussianBlurTransform": {
@@ -58,12 +58,12 @@
         "probability": 0.05
     },
     "InverseTransform": {
-        "retain_stats": false,
-        "probability": 0.30
+        "retain_stats": true,
+        "probability": 0.15
     },
     "HistogramEqualizationTransform": {
         "retain_stats": false,
-        "probability": 0.20
+        "probability": 0.15
     },
     "SimulateLowResTransform": {
         "scale": [0.5, 1.0],
