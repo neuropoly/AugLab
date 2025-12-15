@@ -33,6 +33,10 @@
         "std": 0.1,
         "probability": 0.10
     },
+    "ClampTransform": {
+        "max_clamp_amount": 0.2,
+        "probability": 0.40
+    },
     "BrightnessTransform": {
         "brightness_range": [0.75, 1.25],
         "probability": 0.15

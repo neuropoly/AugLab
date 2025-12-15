@@ -930,6 +930,86 @@ class RandomBiasFieldGPU(ImageOnlyTransform):
 
         return input
 
+# Random clamping transform
+class RandomClampGPU(ImageOnlyTransform):
+    """Apply random gamma adjustment to image.
+    If the image is torch Tensor, it is expected to have [N, C, X, Y] or [N, C, X, Y, Z] shape.
+
+    Args:
+        max_clamp_amount (float): Amount to clamp the image values (0 < min_clamp < max_clamp_amount and 1 - max_clamp_amount < max_clamp < 1). Default is 0.2.
+        apply_to_channel (list of int): List of channel indices to apply the gamma adjustment to. Default is [0].
+        retain_stats (bool): If True, retain the original mean and standard deviation of the image after gamma adjustment. Default is False.
+        same_on_batch (bool): Apply the same transformation across the batch. Default is False.
+        p (float): Probability of applying the transform. Default is 1.0.
+        keepdim (bool): Whether to keep the number of dimensions. Default is False.
+
+    Returns:
+        Tensor: Image with adjusted brightness.
+    """
+    
+    def __init__(
+        self,
+        max_clamp_amount: float = 0.2,
+        apply_to_channel: list[int] = [0],  # Apply to first channel by default
+        retain_stats: bool = False,
+        same_on_batch: bool = False,
+        p: float = 1.0,
+        keepdim: bool = True,
+        **kwargs,
+    ) -> None:
+        super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
+        self.max_clamp_amount = max_clamp_amount
+        self.apply_to_channel = apply_to_channel
+        self.retain_stats = retain_stats
+
+    @torch.no_grad()  # disable gradients for efficiency
+    def apply_transform(
+        self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
+    ) -> Tensor:
+
+        # Apply clamping
+        for c in self.apply_to_channel:
+            channel_data = input[:, c]  # [N, ...spatial...]
+            if self.retain_stats:
+                reduce_dims = tuple(range(1, channel_data.dim()))
+                # store per-sample mean/std (shape [N])
+                orig_means = channel_data.mean(dim=reduce_dims)
+                orig_stds = channel_data.std(dim=reduce_dims)
+            
+            if self.same_on_batch:
+                min_clamp = torch.rand(1, device=input.device, dtype=input.dtype) * self.max_clamp_amount
+                max_clamp = 1.0 - (torch.rand(1, device=input.device, dtype=input.dtype) * self.max_clamp_amount)
+                for i in range(input.shape[0]):
+                    channel_data[i] = torch.clamp(channel_data[i], min_clamp * torch.min(channel_data[i]), max_clamp * torch.max(channel_data[i]))
+
+            else:
+                for i in range(input.shape[0]):
+                    min_clamp = torch.rand(1, device=input.device, dtype=input.dtype) * self.max_clamp_amount
+                    max_clamp = 1.0 - (torch.rand(1, device=input.device, dtype=input.dtype) * self.max_clamp_amount)
+                    channel_data[i] = torch.clamp(channel_data[i], min_clamp * torch.min(channel_data[i]), max_clamp * torch.max(channel_data[i]))
+            
+            if self.retain_stats:
+                # Adjust mean and std to match original
+                eps = 1e-8
+                reduce_dims = tuple(range(1, channel_data.dim()))
+                new_mean = channel_data.mean(dim=reduce_dims)  # [N]
+                new_std = channel_data.std(dim=reduce_dims)    # [N]
+                # reshape stats to broadcast over spatial dims: [N,1,1,...]
+                shape = [channel_data.shape[0]] + [1] * (channel_data.dim() - 1)
+                nm = new_mean.view(shape)
+                ns = new_std.view(shape)
+                om = orig_means.view(shape)
+                os = orig_stds.view(shape)
+                channel_data = (channel_data - nm) / (ns + eps) * os + om
+            # Final safety: check if nan/inf appeared
+            if torch.isnan(channel_data).any() or torch.isinf(channel_data).any():
+                print(f"Warning nan: {self.__class__.__name__}", flush=True)
+                continue
+            input[:, c] = channel_data
+
+        return input
+
+
 class ZscoreNormalizationGPU(ImageOnlyTransform):
     """Apply z-score normalization to selected channels.
 

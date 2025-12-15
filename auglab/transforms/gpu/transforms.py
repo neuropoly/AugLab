@@ -5,7 +5,7 @@ import torch
 import numpy as np
 
 from auglab.transforms.gpu.contrast import RandomConvTransformGPU, RandomGaussianNoiseGPU, RandomBrightnessGPU, RandomGammaGPU, RandomFunctionGPU, \
-RandomHistogramEqualizationGPU, RandomInverseGPU, RandomBiasFieldGPU, RandomContrastGPU, ZscoreNormalizationGPU
+RandomHistogramEqualizationGPU, RandomInverseGPU, RandomBiasFieldGPU, RandomContrastGPU, ZscoreNormalizationGPU, RandomClampGPU
 from auglab.transforms.gpu.spatial import RandomAffine3DCustom, RandomLowResTransformGPU, RandomFlipTransformGPU, RandomAcqTransformGPU
 from auglab.transforms.gpu.fromSeg import RandomRedistributeSegGPU
 from auglab.transforms.gpu.base import AugmentationSequentialCustom
@@ -24,6 +24,14 @@ class AugTransformsGPU(AugmentationSequentialCustom):
 
     def _build_transforms(self) -> list[nn.Module]:
         transforms = []
+
+        # Clamping transform
+        clamp_params = self.transform_params.get('ClampTransform')
+        if clamp_params is not None:
+            transforms.append(RandomClampGPU(
+                max_clamp_amount=clamp_params.get('max_clamp_amount', 0.0),
+                p=clamp_params.get('probability', 0),
+            ))
 
         # Noise transforms
         noise_params = self.transform_params.get('GaussianNoiseTransform')
