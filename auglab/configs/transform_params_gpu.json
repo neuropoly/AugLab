@@ -98,6 +98,8 @@
         "scale": [0.7, 1.4],
         "shear": [-10, 10, -10, 10, -10, 10],
         "resample": "bilinear",
+        "probability": 0
+    },
     "ZscoreNormalizationTransform": {
         "probability": 0.5
     }
