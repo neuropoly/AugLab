@@ -12,6 +12,7 @@ import torch.nn.functional as F
 from typing import Any, Dict, Optional, Tuple, Union
 from auglab.transforms.gpu.base import ImageOnlyTransform
 
+
 # Affine transform
 class RandomAffine3DCustom(RigidAffineAugmentationBase3D):
     r"""Apply affine transformation 3D volumes (5D tensor).
@@ -100,9 +101,7 @@ class RandomAffine3DCustom(RigidAffineAugmentationBase3D):
             Tuple[Tuple[float, float], Tuple[float, float], Tuple[float, float]],
         ],
         translate: Optional[Union[Tensor, Tuple[float, float, float]]] = None,
-        scale: Optional[
-            Union[Tensor, Tuple[float, float], Tuple[Tuple[float, float], Tuple[float, float], Tuple[float, float]]]
-        ] = None,
+        scale: Optional[Union[Tensor, Tuple[float, float], Tuple[Tuple[float, float], Tuple[float, float], Tuple[float, float]]]] = None,
         shears: Union[
             None,
             Tensor,
@@ -166,7 +165,7 @@ class RandomAffine3DCustom(RigidAffineAugmentationBase3D):
             flags["resample"].name.lower(),
             align_corners=bool(align),
         )
-    
+
     def apply_non_transform_mask(
         self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
     ) -> Tensor:
@@ -191,6 +190,7 @@ class RandomAffine3DCustom(RigidAffineAugmentationBase3D):
             flags["resample"] = resample_method
         return output
 
+
 # Low resolution transform
 class RandomLowResTransformGPU(RigidAffineAugmentationBase3D):
     """
@@ -208,12 +208,11 @@ class RandomLowResTransformGPU(RigidAffineAugmentationBase3D):
         **kwargs,
     ) -> None:
         super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
-        self.flags = {"resample": "nearest"} # Use nearest neighbour for now because changing the resampling method for each channel is tricky 
-        self._param_generator = ShapeGenerator3D(
-            scale=scale,
-            crop=crop
-        )
-    
+        self.flags = {
+            "resample": "nearest"
+        }  # Use nearest neighbour for now because changing the resampling method for each channel is tricky
+        self._param_generator = ShapeGenerator3D(scale=scale, crop=crop)
+
     def compute_transformation(self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any]) -> Tensor:
         return self.identity_matrix(input)
 
@@ -228,18 +227,17 @@ class RandomLowResTransformGPU(RigidAffineAugmentationBase3D):
         batch_size, C, D, H, W = input.shape
 
         # params expected to contain 'scale' and 'crop' as tensors of shape (B, 3)
-        if params is None or 'scale' not in params or 'crop' not in params:
+        if params is None or "scale" not in params or "crop" not in params:
             raise ValueError("params must contain 'scale' and 'crop' tensors")
 
-        scales = params['scale']  # shape [B, 3]
-        crops = params['crop']    # shape [B, 3]
+        scales = params["scale"]  # shape [B, 3]
+        crops = params["crop"]  # shape [B, 3]
 
-        resample = self.flags.get('resample', 'nearest')
+        resample = self.flags.get("resample", "nearest")
 
         # Define interpolation modes
         interp_down = resample
         interp_up = resample
-
 
         # Process per-channel and per-batch element
         out = input.clone()
@@ -258,7 +256,7 @@ class RandomLowResTransformGPU(RigidAffineAugmentationBase3D):
                 x.unsqueeze(0),
                 size=(down_D, down_H, down_W),
                 mode=interp_down,
-                align_corners=False if 'linear' in interp_down else None,
+                align_corners=False if "linear" in interp_down else None,
             )
 
             # upsample back to original resolution (keep as 4D tensor [1,1,D,H,W])
@@ -266,8 +264,10 @@ class RandomLowResTransformGPU(RigidAffineAugmentationBase3D):
                 x_down,
                 size=(D, H, W),
                 mode=interp_up,
-                align_corners=False if 'linear' in interp_up else None,
-            ).squeeze(0)  # [C, D, H, W]
+                align_corners=False if "linear" in interp_up else None,
+            ).squeeze(
+                0
+            )  # [C, D, H, W]
 
             # determine crop fraction and crop size on the upsampled image
             cx, cy, cz = crops[b]
@@ -311,7 +311,7 @@ class RandomLowResTransformGPU(RigidAffineAugmentationBase3D):
             out[b] = canvas
 
         return out
-    
+
     def apply_non_transform_mask(
         self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
     ) -> Tensor:
@@ -330,18 +330,14 @@ class RandomLowResTransformGPU(RigidAffineAugmentationBase3D):
         output = self.apply_transform(input, params, flags, transform)
         return output
 
+
 class ShapeGenerator3D(RandomGeneratorBase):
-    def __init__(
-            self, 
-            scale: Tuple[float, float],
-            crop: Tuple[float, float],
-            one_dim: bool = False
-        ) -> None:
+    def __init__(self, scale: Tuple[float, float], crop: Tuple[float, float], one_dim: bool = False) -> None:
         super().__init__()
         self.scale = scale
         self.crop = crop
         self.one_dim = one_dim
-    
+
     def make_samplers(self, device: torch.device, dtype: torch.dtype) -> None:
         scale = _tuple_range_reader(self.scale, 3, device, dtype)
         if self.one_dim:
@@ -370,7 +366,9 @@ class ShapeGenerator3D(RandomGeneratorBase):
     def forward(self, batch_shape: Tuple[int, ...], same_on_batch: bool = False) -> Dict[str, torch.Tensor]:
         batch_size = batch_shape[0]
 
-        _device, _dtype = _extract_device_dtype([self.scalex_sampler, self.scaley_sampler, self.scalez_sampler, self.cropx_sampler, self.cropy_sampler, self.cropz_sampler])
+        _device, _dtype = _extract_device_dtype(
+            [self.scalex_sampler, self.scaley_sampler, self.scalez_sampler, self.cropx_sampler, self.cropy_sampler, self.cropz_sampler]
+        )
 
         scalex = _adapted_rsampling((batch_size,), self.scalex_sampler, same_on_batch)
         scaley = _adapted_rsampling((batch_size,), self.scaley_sampler, same_on_batch)
@@ -382,10 +380,8 @@ class ShapeGenerator3D(RandomGeneratorBase):
         cropz = _adapted_rsampling((batch_size,), self.cropz_sampler, same_on_batch)
         crop = torch.stack([cropx, cropy, cropz], dim=1)
 
-        return {
-            "scale": torch.as_tensor(scale, device=_device, dtype=_dtype),
-            "crop": torch.as_tensor(crop, device=_device, dtype=_dtype)
-        }
+        return {"scale": torch.as_tensor(scale, device=_device, dtype=_dtype), "crop": torch.as_tensor(crop, device=_device, dtype=_dtype)}
+
 
 # Acquisition transforms
 class RandomAcqTransformGPU(ImageOnlyTransform):
@@ -407,11 +403,7 @@ class RandomAcqTransformGPU(ImageOnlyTransform):
         super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
         self.flags = {"resample": "trilinear"}
         self.apply_to_channel = apply_to_channel
-        self._param_generator = ShapeGenerator3D(
-            scale=scale,
-            crop=crop,
-            one_dim=one_dim
-        )
+        self._param_generator = ShapeGenerator3D(scale=scale, crop=crop, one_dim=one_dim)
 
     @torch.no_grad()
     def apply_transform(
@@ -424,18 +416,17 @@ class RandomAcqTransformGPU(ImageOnlyTransform):
         batch_size, C, D, H, W = input.shape
 
         # params expected to contain 'scale' and 'crop' as tensors of shape (B, 3)
-        if params is None or 'scale' not in params or 'crop' not in params:
+        if params is None or "scale" not in params or "crop" not in params:
             raise ValueError("params must contain 'scale' and 'crop' tensors")
 
-        scales = params['scale']  # shape [B, 3]
-        crops = params['crop']    # shape [B, 3]
+        scales = params["scale"]  # shape [B, 3]
+        crops = params["crop"]  # shape [B, 3]
 
-        resample = self.flags.get('resample', 'trilinear')
+        resample = self.flags.get("resample", "trilinear")
 
         # Define interpolation modes
         interp_down = resample
         interp_up = resample
-
 
         # Process per-channel and per-batch element
         out = input.clone()
@@ -457,16 +448,20 @@ class RandomAcqTransformGPU(ImageOnlyTransform):
                     x.unsqueeze(0).unsqueeze(0),
                     size=(down_D, down_H, down_W),
                     mode=interp_down,
-                    align_corners=False if 'linear' in interp_down else None,
+                    align_corners=False if "linear" in interp_down else None,
                 )
 
                 # upsample back to original resolution
-                x_up = F.interpolate(
-                    x_down,
-                    size=(D, H, W),
-                    mode=interp_up,
-                    align_corners=False if 'linear' in interp_up else None,
-                ).squeeze(0).squeeze(0)  # [D, H, W]
+                x_up = (
+                    F.interpolate(
+                        x_down,
+                        size=(D, H, W),
+                        mode=interp_up,
+                        align_corners=False if "linear" in interp_up else None,
+                    )
+                    .squeeze(0)
+                    .squeeze(0)
+                )  # [D, H, W]
 
                 # determine crop fraction and crop size on the upsampled image
                 cx, cy, cz = crops[b]
@@ -532,10 +527,10 @@ class RandomFlipTransformGPU(RigidAffineAugmentationBase3D):
             self.flip_axis = [flip_axis]
         else:
             self.flip_axis = list(flip_axis)
-        
+
         # generator creates per-batch flip flags for axes (z, y, x)
         self._param_generator = FlipGenerator3D(flip_axis=self.flip_axis)
-    
+
     def compute_transformation(self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any]) -> Tensor:
         return self.identity_matrix(input)
 
@@ -543,7 +538,7 @@ class RandomFlipTransformGPU(RigidAffineAugmentationBase3D):
     def apply_transform(
         self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
     ) -> Tensor:
-        
+
         # input shape: (B, C, D, H, W)
         if not isinstance(input, torch.Tensor):
             raise TypeError(f"Expected input to be a Tensor. Got {type(input)}")
@@ -551,26 +546,24 @@ class RandomFlipTransformGPU(RigidAffineAugmentationBase3D):
         batch_size, C, D, H, W = input.shape
 
         # Expect params to contain 'flip' tensor of shape [B, 3] with 0/1 values
-        flips = None
-        if params is not None and 'flip' in params:
-            flips = params['flip']
+        # flips = None
+        # if params is not None and 'flip' in params:
+        #    flips = params['flip']
 
         out = input.clone()
         # For each batch element, build list of spatial dims to flip (D,H,W -> dims 2,3,4)
         for b in range(batch_size):
             flip_dims = []
-            if flips is not None:
-                fb = flips[b]
-                # fb expected as length-3 tensor for (z,y,x)
-                for axis in range(3):
-                    if int(fb[axis]) == 1 and axis in self.flip_axis:
-                        flip_dims.append(1 + axis)
+            # fb expected as length-3 tensor for (z,y,x)
+            for axis in range(3):
+                if axis in self.flip_axis:
+                    flip_dims.append(1 + axis)
 
             if len(flip_dims) > 0:
                 out[b] = torch.flip(input[b], dims=tuple(flip_dims))
 
         return out
-    
+
     def apply_non_transform_mask(
         self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
     ) -> Tensor:
@@ -589,6 +582,7 @@ class RandomFlipTransformGPU(RigidAffineAugmentationBase3D):
         output = self.apply_transform(input, params, flags, transform)
         return output
 
+
 class FlipGenerator3D(RandomGeneratorBase):
     """
     Generate per-batch flip flags for 3 axes (z, y, x).
@@ -596,6 +590,7 @@ class FlipGenerator3D(RandomGeneratorBase):
     Returns a dict with key "flip" and value tensor of shape (B, 3) with 0/1 values.
     Ensures at least one axis is flipped per batch element.
     """
+
     def __init__(self, flip_axis):
         super().__init__()
         # flip_axis is a list of allowed axes (subset of [0,1,2]).
