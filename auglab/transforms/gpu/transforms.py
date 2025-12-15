@@ -30,6 +30,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
         if clamp_params is not None:
             transforms.append(RandomClampGPU(
                 max_clamp_amount=clamp_params.get('max_clamp_amount', 0.0),
+                retain_stats=clamp_params.get('retain_stats', False),
                 p=clamp_params.get('probability', 0),
             ))
 

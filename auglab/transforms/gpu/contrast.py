@@ -980,13 +980,13 @@ class RandomClampGPU(ImageOnlyTransform):
                 min_clamp = torch.rand(1, device=input.device, dtype=input.dtype) * self.max_clamp_amount
                 max_clamp = 1.0 - (torch.rand(1, device=input.device, dtype=input.dtype) * self.max_clamp_amount)
                 for i in range(input.shape[0]):
-                    channel_data[i] = torch.clamp(channel_data[i], min_clamp * torch.min(channel_data[i]), max_clamp * torch.max(channel_data[i]))
+                    channel_data[i] = torch.clamp(channel_data[i], min_clamp * torch.max(channel_data[i]), max_clamp * torch.max(channel_data[i]))
 
             else:
                 for i in range(input.shape[0]):
                     min_clamp = torch.rand(1, device=input.device, dtype=input.dtype) * self.max_clamp_amount
                     max_clamp = 1.0 - (torch.rand(1, device=input.device, dtype=input.dtype) * self.max_clamp_amount)
-                    channel_data[i] = torch.clamp(channel_data[i], min_clamp * torch.min(channel_data[i]), max_clamp * torch.max(channel_data[i]))
+                    channel_data[i] = torch.clamp(channel_data[i], min_clamp * torch.max(channel_data[i]), max_clamp * torch.max(channel_data[i]))
             
             if self.retain_stats:
                 # Adjust mean and std to match original
