@@ -216,7 +216,11 @@ class AugTransformsGPU(AugmentationSequentialCustom):
         ))
         
         # Z-score normalization
-        transforms.append(ZscoreNormalizationGPU())
+        zscore_params = self.transform_params.get('ZscoreNormalizationTransform')
+        if zscore_params is not None:
+            transforms.append(ZscoreNormalizationGPU(
+                p=zscore_params.get('probability', 0)
+            ))
 
         return transforms
 

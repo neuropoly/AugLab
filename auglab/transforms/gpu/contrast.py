@@ -1023,9 +1023,10 @@ class ZscoreNormalizationGPU(ImageOnlyTransform):
         self,
         apply_to_channel: list[int] = [0],
         keepdim: bool = True,
+        p: float = 1.0,
         **kwargs,
     ) -> None:
-        super().__init__(p=1.0, same_on_batch=False, keepdim=keepdim)
+        super().__init__(p=p, same_on_batch=False, keepdim=keepdim)
         self.apply_to_channel = apply_to_channel
 
     @torch.no_grad()
