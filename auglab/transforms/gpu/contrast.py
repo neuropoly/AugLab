@@ -140,9 +140,9 @@ class RandomConvTransformGPU(ImageOnlyTransform):
                         tot_ += torch.abs(apply_convolution(channel_data, k, dim=3))
                     else:
                         tot_ += apply_convolution(channel_data, k, dim=3)
-                if torch.rand(1).item() < self.mix_prob:
-                    alpha = torch.rand(1, device=input.device)
-                    tot_ = alpha * channel_data + (1 - alpha) * tot_
+                # if torch.rand(1).item() < self.mix_prob:
+                #    alpha = torch.rand(1, device=input.device)
+                #    tot_ = alpha * channel_data + (1 - alpha) * tot_
                 x = tot_
             elif self.kernel_type == "RandConv":
                 # RandConv kernels are per-sample, per-call
@@ -152,9 +152,9 @@ class RandomConvTransformGPU(ImageOnlyTransform):
 
                     conv = apply_convolution(channel_data[b : b + 1], kernel, dim=3).squeeze(0)
 
-                    if torch.rand(1).item() < self.mix_prob:
-                        alpha = torch.rand(1, device=input.device)
-                        conv = alpha * channel_data[b] + (1 - alpha) * conv
+                    # if torch.rand(1).item() < self.mix_prob:
+                    #    alpha = torch.rand(1, device=input.device)
+                    #    conv = alpha * channel_data[b] + (1 - alpha) * conv
 
                     out.append(conv)
 
@@ -173,6 +173,10 @@ class RandomConvTransformGPU(ImageOnlyTransform):
                 om = orig_means.view(shape)
                 os = orig_stds.view(shape)
                 x = (x - nm) / (ns + eps) * os + om
+
+            if torch.rand(1).item() < self.mix_prob:
+                alpha = 0.2 + 0.8 * torch.rand(1, device=input.device)
+                x = alpha * channel_data + (1 - alpha) * x
 
             # Final safety: check if nan/inf appeared
             if torch.isnan(x).any() or torch.isinf(x).any():
