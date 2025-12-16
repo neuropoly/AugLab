@@ -20,7 +20,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
         with open(config_path, 'r') as f:
             self.transform_params = json.load(f)
         transforms = self._build_transforms()
-        super().__init__(*transforms, data_keys=["input", "mask"], same_on_batch=False)
+        super().__init__(*transforms, data_keys=["input", "mask"], same_on_batch=True) # Same_on_batch to ensure mask are aligned with images correctly (custom) see AugmentationSequentialOpsCustom in base.py
 
     def _build_transforms(self) -> list[nn.Module]:
         transforms = []
@@ -32,6 +32,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 max_clamp_amount=clamp_params.get('max_clamp_amount', 0.0),
                 in_seg=clamp_params.get('in_seg', 0.0),
                 out_seg=clamp_params.get('out_seg', 0.0),
+                mix_in_out=clamp_params.get('mix_in_out', False),
                 retain_stats=clamp_params.get('retain_stats', False),
                 p=clamp_params.get('probability', 0),
             ))
@@ -44,6 +45,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 std=noise_params.get('std', 1.0),
                 in_seg=noise_params.get('in_seg', 0.0),
                 out_seg=noise_params.get('out_seg', 0.0),
+                mix_in_out=noise_params.get('mix_in_out', False),
                 p=noise_params.get('probability', 0),
             ))
         
@@ -54,6 +56,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 kernel_type=gaussianblur_params.get('kernel_type', 'GaussianBlur'),
                 in_seg=gaussianblur_params.get('in_seg', 0.0),
                 out_seg=gaussianblur_params.get('out_seg', 0.0),
+                mix_in_out=gaussianblur_params.get('mix_in_out', False),
                 p=gaussianblur_params.get('probability', 0),
                 sigma=gaussianblur_params.get('sigma', 1.0),
             ))
@@ -65,6 +68,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 brightness_range=brightness_params.get('brightness_range', [0.5, 1.5]),
                 in_seg=brightness_params.get('in_seg', 0.0),
                 out_seg=brightness_params.get('out_seg', 0.0),
+                mix_in_out=brightness_params.get('mix_in_out', False),
                 p=brightness_params.get('probability', 0),
             ))
 
@@ -77,6 +81,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 invert_image=False,
                 in_seg=gamma_params.get('in_seg', 0.0),
                 out_seg=gamma_params.get('out_seg', 0.0),
+                mix_in_out=gamma_params.get('mix_in_out', False),
                 retain_stats=gamma_params.get('retain_stats', False),
             ))
 
@@ -87,6 +92,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 p=inv_gamma_params.get('probability', 0),
                 in_seg=inv_gamma_params.get('in_seg', 0.0),
                 out_seg=inv_gamma_params.get('out_seg', 0.0),
+                mix_in_out=inv_gamma_params.get('mix_in_out', False),
                 invert_image=True,
                 retain_stats=inv_gamma_params.get('retain_stats', False),
             ))
@@ -99,6 +105,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 p=contrast_params.get('probability', 0),
                 in_seg=contrast_params.get('in_seg', 0.0),
                 out_seg=contrast_params.get('out_seg', 0.0),
+                mix_in_out=contrast_params.get('mix_in_out', False),
                 retain_stats=contrast_params.get('retain_stats', False)
             ))
 
@@ -118,6 +125,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                     p=function_params.get('probability', 0),
                     in_seg=function_params.get('in_seg', 0.0),
                     out_seg=function_params.get('out_seg', 0.0),
+                    mix_in_out=function_params.get('mix_in_out', False),
                     retain_stats=function_params.get('retain_stats', False),
             ))
         
@@ -128,6 +136,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 p=inverse_params.get('probability', 0),
                 in_seg=inverse_params.get('in_seg', 0.0),
                 out_seg=inverse_params.get('out_seg', 0.0),
+                mix_in_out=inverse_params.get('mix_in_out', False),
                 retain_stats=inverse_params.get('retain_stats', False),
             ))
         
@@ -138,6 +147,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 p=histo_params.get('probability', 0),
                 in_seg=histo_params.get('in_seg', 0.0),
                 out_seg=histo_params.get('out_seg', 0.0),
+                mix_in_out=histo_params.get('mix_in_out', False),
                 retain_stats=histo_params.get('retain_stats', False),
             ))
 
@@ -168,6 +178,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 p=bias_field_params.get('probability', 0),
                 in_seg=bias_field_params.get('in_seg', 0.0),
                 out_seg=bias_field_params.get('out_seg', 0.0),
+                mix_in_out=bias_field_params.get('mix_in_out', False),
                 retain_stats=bias_field_params.get('retain_stats', False),
                 coefficients=bias_field_params.get('coefficients', 0.5),
             ))
@@ -215,6 +226,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 p=scharr_params.get('probability', 0),
                 in_seg=scharr_params.get('in_seg', 0.0),
                 out_seg=scharr_params.get('out_seg', 0.0),
+                mix_in_out=scharr_params.get('mix_in_out', False),
                 retain_stats=scharr_params.get('retain_stats', True),
                 absolute=scharr_params.get('absolute', True),
             ))
@@ -227,6 +239,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 p=unsharp_params.get('probability', 0),
                 in_seg=unsharp_params.get('in_seg', 0.0),
                 out_seg=unsharp_params.get('out_seg', 0.0),
+                mix_in_out=unsharp_params.get('mix_in_out', False),
                 sigma=unsharp_params.get('sigma', 1.0),
                 unsharp_amount=unsharp_params.get('unsharp_amount', 1.5),
         ))
@@ -239,6 +252,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 p=randconv_params.get('probability', 0),
                 in_seg=randconv_params.get('in_seg', 0.0),
                 out_seg=randconv_params.get('out_seg', 0.0),
+                mix_in_out=randconv_params.get('mix_in_out', False),
                 retain_stats=randconv_params.get('retain_stats', False),
                 kernel_sizes=randconv_params.get('kernel_sizes', [1,3,5,7]),
                 mix_prob=randconv_params.get('mix_prob', 0.0),
