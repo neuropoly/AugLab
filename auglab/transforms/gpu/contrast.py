@@ -11,6 +11,57 @@ import math
 from auglab.transforms.gpu.base import ImageOnlyTransform
 from typing import Any, Dict, Optional, Tuple, Union, List
 
+def _choose_region_mode(p_in: float, p_out: float, seg_mask: Optional[torch.Tensor]) -> str:
+    """Sample where to apply the transform: 'in', 'out', or 'all'.
+
+    - p_in, p_out are probabilities in [0,1].
+    - If seg_mask is None, or both probs are 0, return 'all'.
+    - If p_in + p_out > 1, renormalize so p_all=0.
+    """
+    p_in = float(max(0.0, min(1.0, p_in)))
+    p_out = float(max(0.0, min(1.0, p_out)))
+    in_bool = torch.rand(()) < p_in
+    out_bool = torch.rand(()) < p_out
+    if in_bool and not out_bool:
+        return 'in'
+    if out_bool and not in_bool:
+        return 'out'
+    return 'all'
+
+def _apply_region_mode(orig: torch.Tensor, transformed: torch.Tensor, seg_mask: Optional[torch.Tensor], mode: str, mix_in_out: bool = False) -> torch.Tensor:
+    """Blend transformed with orig based on region selection mode.
+
+    - mode 'all': return transformed
+    - mode 'in': apply transform inside seg, keep orig outside
+    - mode 'out': apply  transform outside seg, keep orig inside
+
+    mix_in_out: if True, randomly apply transform to some of the segmentation, not all.
+    """
+    if seg_mask is None or mode == 'all':
+        return transformed
+    
+    # Rescale transformed based on min max orig
+    # Needed due to the important change in the image
+    orig_min = torch.amin(orig, dim=tuple(range(1, orig.dim())), keepdim=True)
+    orig_max = torch.amax(orig, dim=tuple(range(1, orig.dim())), keepdim=True)
+    transformed_min = torch.amin(transformed, dim=tuple(range(1, transformed.dim())), keepdim=True)
+    transformed_max = torch.amax(transformed, dim=tuple(range(1, transformed.dim())), keepdim=True)
+    transformed = (transformed - transformed_min) / (transformed_max - transformed_min + 1e-8) * (orig_max - orig_min) + orig_min
+
+    m = seg_mask.to(transformed.dtype)
+    if mode == 'out':
+        m = 1.0 - m
+    if mix_in_out:
+        for i in range(seg_mask.shape[0]):
+            # Create a tensor with random one and zero
+            
+            o = torch.randint(0, 2, (seg_mask.shape[1],), device=seg_mask.device, dtype=seg_mask.dtype)
+            m[i] = m[i] * o.view(-1, 1, 1, 1)  # Broadcasting o to match the dimensions of m
+    
+    m = torch.sum(m, axis=1)
+
+    return m * transformed + (1.0 - m) * orig
+
 ## Convolution transform
 class RandomConvTransformGPU(ImageOnlyTransform):
     """Apply convolution to image.
@@ -33,6 +84,8 @@ class RandomConvTransformGPU(ImageOnlyTransform):
         apply_to_channel: list[int] = [0],  # Apply to first channel by default
         same_on_batch: bool = False,
         retain_stats: bool = False,
+        in_seg: float = 0.0,
+        out_seg: float = 0.0,
         p: float = 1.0,
         keepdim: bool = True,
         **kwargs,
@@ -46,6 +99,8 @@ class RandomConvTransformGPU(ImageOnlyTransform):
         self.absolute = kwargs.get('absolute', False)
         self.sigma = kwargs.get('sigma', 1.0)
         self.retain_stats = retain_stats
+        self.in_seg = in_seg
+        self.out_seg = out_seg
         # Unsharp mask parameters: amount controls strength of the mask
         self.unsharp_amount = kwargs.get('unsharp_amount', 1.0)
         # RandConv parameters
@@ -121,10 +176,14 @@ class RandomConvTransformGPU(ImageOnlyTransform):
     ) -> Tensor:
         # Initialize kernel
         kernel = self.get_kernel(device=input.device)
+        
+        # Load segmentation
+        seg_mask = params.get('seg', None)
 
         # Apply convolution
         for c in self.apply_to_channel:
             channel_data = input[:, c]  # [N, ...spatial...]
+            orig = channel_data.clone()
             
             if self.retain_stats:
                 reduce_dims = tuple(range(1, channel_data.dim()))
@@ -176,6 +235,11 @@ class RandomConvTransformGPU(ImageOnlyTransform):
                 om = orig_means.view(shape)
                 os = orig_stds.view(shape)
                 x = (x - nm) / (ns + eps) * os + om
+            
+            # Apply region selection
+            if not seg_mask is None:
+                region_mode = _choose_region_mode(self.in_seg, self.out_seg, seg_mask)
+                x = _apply_region_mode(orig, x, seg_mask, region_mode)
             
             # Final safety: check if nan/inf appeared
             if torch.isnan(x).any() or torch.isinf(x).any():
@@ -269,6 +333,8 @@ class RandomGaussianNoiseGPU(ImageOnlyTransform):
         std: float = 0.1,
         apply_to_channel: list[int] = [0],  # Apply to first channel by default
         same_on_batch: bool = False,
+        in_seg: float = 0.0,
+        out_seg: float = 0.0,
         p: float = 1.0,
         keepdim: bool = True,
         **kwargs,
@@ -277,12 +343,15 @@ class RandomGaussianNoiseGPU(ImageOnlyTransform):
         self.apply_to_channel = apply_to_channel
         self.mean = mean
         self.std = std
+        self.in_seg = in_seg
+        self.out_seg = out_seg
 
     @torch.no_grad()  # disable gradients for efficiency
     def apply_transform(
         self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
     ) -> Tensor:
         # Generate Gaussian noise with the same shape as input
+        seg_mask = params.get('seg', None)
         for c in self.apply_to_channel:
             if self.same_on_batch:
                 std = torch.rand(1, device=input.device, dtype=input.dtype) * self.std
@@ -294,11 +363,16 @@ class RandomGaussianNoiseGPU(ImageOnlyTransform):
                 for i in range(input.shape[0]):
                     noise[i] = noise[i] * std[i] + self.mean
             
+            orig = input[:, c]
+            x = orig + noise
+            if not seg_mask is None:
+                region_mode = _choose_region_mode(self.in_seg, self.out_seg, seg_mask)
+                x = _apply_region_mode(orig, x, seg_mask, region_mode)
             # Final safety: check if nan/inf appeared
-            if torch.isnan(noise).any() or torch.isinf(noise).any():
+            if torch.isnan(x).any() or torch.isinf(x).any():
                 print(f"Warning nan: {self.__class__.__name__}", flush=True)
                 continue
-            input[:, c] += noise
+            input[:, c] = x
 
         return input
 
@@ -323,6 +397,8 @@ class RandomBrightnessGPU(ImageOnlyTransform):
         brightness_range: list[float, float] = (0.9, 1.1),
         apply_to_channel: list[int] = [0],  # Apply to first channel by default
         same_on_batch: bool = False,
+        in_seg: float = 0.0,
+        out_seg: float = 0.0,
         p: float = 1.0,
         keepdim: bool = True,
         **kwargs,
@@ -330,6 +406,8 @@ class RandomBrightnessGPU(ImageOnlyTransform):
         super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
         self.brightness_range = brightness_range
         self.apply_to_channel = apply_to_channel
+        self.in_seg = in_seg
+        self.out_seg = out_seg
 
     @torch.no_grad()  # disable gradients for efficiency
     def apply_transform(
@@ -337,20 +415,26 @@ class RandomBrightnessGPU(ImageOnlyTransform):
     ) -> Tensor:
 
         # Apply brightness adjustment
+        seg_mask = params.get('seg', None)
         for c in self.apply_to_channel:
             channel_data = input[:, c]  # [N, ...spatial...]
+            orig = channel_data.clone()
             if self.same_on_batch:
                 factor = torch.rand(1, device=input.device, dtype=input.dtype) * (self.brightness_range[1] - self.brightness_range[0]) + self.brightness_range[0]
-                channel_data *= factor
+                x = channel_data * factor
             else:
                 factor = torch.rand(input.shape[0], device=input.device, dtype=input.dtype) * (self.brightness_range[1] - self.brightness_range[0]) + self.brightness_range[0]
+                x = channel_data.clone()
                 for i in range(input.shape[0]):
-                    channel_data[i] *= factor[i]
+                    x[i] = x[i] * factor[i]
+            if not seg_mask is None:
+                region_mode = _choose_region_mode(self.in_seg, self.out_seg, seg_mask)
+                x = _apply_region_mode(orig, x, seg_mask, region_mode)
             # Final safety: check if nan/inf appeared
-            if torch.isnan(channel_data).any() or torch.isinf(channel_data).any():
+            if torch.isnan(x).any() or torch.isinf(x).any():
                 print(f"Warning nan: {self.__class__.__name__}", flush=True)
                 continue
-            input[:, c] = channel_data
+            input[:, c] = x
         return input
 
 ## Gamma transform
@@ -378,6 +462,8 @@ class RandomGammaGPU(ImageOnlyTransform):
         apply_to_channel: list[int] = [0],  # Apply to first channel by default
         retain_stats: bool = False,
         same_on_batch: bool = False,
+        in_seg: float = 0.0,
+        out_seg: float = 0.0,
         p: float = 1.0,
         keepdim: bool = False,
         **kwargs,
@@ -387,6 +473,8 @@ class RandomGammaGPU(ImageOnlyTransform):
         self.invert_image = invert_image
         self.retain_stats = retain_stats
         self.apply_to_channel = apply_to_channel
+        self.in_seg = in_seg
+        self.out_seg = out_seg
 
     @torch.no_grad()  # disable gradients for efficiency
     def apply_transform(
@@ -394,11 +482,13 @@ class RandomGammaGPU(ImageOnlyTransform):
     ) -> Tensor:
 
         # Apply gamma transform
+        seg_mask = params.get('seg', None)
         for c in self.apply_to_channel:
             if self.invert_image:
                 channel_data = -input[:, c]  # [N, ...spatial...]
             else:
                 channel_data = input[:, c]  # [N, ...spatial...]
+            orig_full = input[:, c]
             
             if self.retain_stats:
                 reduce_dims = tuple(range(1, channel_data.dim()))
@@ -447,6 +537,9 @@ class RandomGammaGPU(ImageOnlyTransform):
             
             if self.invert_image:
                 channel_data = -channel_data
+            if not seg_mask is None:
+                region_mode = _choose_region_mode(self.in_seg, self.out_seg, seg_mask)
+                channel_data = _apply_region_mode(orig_full, channel_data, seg_mask, region_mode)
             # Final safety: check if nan/inf appeared
             if torch.isnan(channel_data).any() or torch.isinf(channel_data).any():
                 print(f"Warning nan: {self.__class__.__name__}", flush=True)
@@ -478,6 +571,8 @@ class RandomContrastGPU(ImageOnlyTransform):
         apply_to_channel: list[int] = [0],  # Apply to first channel by default
         retain_stats: bool = False,
         same_on_batch: bool = False,
+        in_seg: float = 0.0,
+        out_seg: float = 0.0,
         p: float = 1.0,
         keepdim: bool = True,
         **kwargs,
@@ -486,6 +581,8 @@ class RandomContrastGPU(ImageOnlyTransform):
         self.contrast_range = contrast_range
         self.apply_to_channel = apply_to_channel
         self.retain_stats = retain_stats
+        self.in_seg = in_seg
+        self.out_seg = out_seg
 
     @torch.no_grad()  # disable gradients for efficiency
     def apply_transform(
@@ -493,8 +590,10 @@ class RandomContrastGPU(ImageOnlyTransform):
     ) -> Tensor:
 
         # Apply brightness adjustment
+        seg_mask = params.get('seg', None)
         for c in self.apply_to_channel:
             channel_data = input[:, c]  # [N, ...spatial...]
+            orig = channel_data.clone()
             if self.retain_stats:
                 reduce_dims = tuple(range(1, channel_data.dim()))
                 # store per-sample mean/std (shape [N])
@@ -503,37 +602,38 @@ class RandomContrastGPU(ImageOnlyTransform):
             
             if self.same_on_batch:
                 factor = torch.rand(1, device=input.device, dtype=input.dtype) * (self.contrast_range[1] - self.contrast_range[0]) + self.contrast_range[0]
+                x = channel_data.clone()
                 for i in range(input.shape[0]):
-                    mean = channel_data[i].mean()
-                    channel_data[i] -= mean
-                    channel_data[i] *= factor
-                    channel_data[i] += mean
+                    mean = x[i].mean()
+                    x[i] = (x[i] - mean) * factor + mean
             else:
                 factor = torch.rand(input.shape[0], device=input.device, dtype=input.dtype) * (self.contrast_range[1] - self.contrast_range[0]) + self.contrast_range[0]
+                x = channel_data.clone()
                 for i in range(input.shape[0]):
-                    mean = channel_data[i].mean()
-                    channel_data[i] -= mean
-                    channel_data[i] *= factor[i]
-                    channel_data[i] += mean
+                    mean = x[i].mean()
+                    x[i] = (x[i] - mean) * factor[i] + mean
             
             if self.retain_stats:
                 # Adjust mean and std to match original
                 eps = 1e-8
-                reduce_dims = tuple(range(1, channel_data.dim()))
-                new_mean = channel_data.mean(dim=reduce_dims)  # [N]
-                new_std = channel_data.std(dim=reduce_dims)    # [N]
+                reduce_dims = tuple(range(1, x.dim()))
+                new_mean = x.mean(dim=reduce_dims)  # [N]
+                new_std = x.std(dim=reduce_dims)    # [N]
                 # reshape stats to broadcast over spatial dims: [N,1,1,...]
-                shape = [channel_data.shape[0]] + [1] * (channel_data.dim() - 1)
+                shape = [x.shape[0]] + [1] * (x.dim() - 1)
                 nm = new_mean.view(shape)
                 ns = new_std.view(shape)
                 om = orig_means.view(shape)
                 os = orig_stds.view(shape)
-                channel_data = (channel_data - nm) / (ns + eps) * os + om
+                x = (x - nm) / (ns + eps) * os + om
+            if not seg_mask is None:
+                region_mode = _choose_region_mode(self.in_seg, self.out_seg, seg_mask)
+                x = _apply_region_mode(orig, x, seg_mask, region_mode)
             # Final safety: check if nan/inf appeared
-            if torch.isnan(channel_data).any() or torch.isinf(channel_data).any():
+            if torch.isnan(x).any() or torch.isinf(x).any():
                 print(f"Warning nan: {self.__class__.__name__}", flush=True)
                 continue
-            input[:, c] = channel_data
+            input[:, c] = x
 
         return input
 
@@ -560,6 +660,8 @@ class RandomFunctionGPU(ImageOnlyTransform):
         apply_to_channel: list[int] = [0],  # Apply to first channel by default
         retain_stats: bool = False,
         same_on_batch: bool = False,
+        in_seg: float = 0.0,
+        out_seg: float = 0.0,
         p: float = 1.0,
         keepdim: bool = True,
         **kwargs,
@@ -568,6 +670,8 @@ class RandomFunctionGPU(ImageOnlyTransform):
         self.func = func
         self.retain_stats = retain_stats
         self.apply_to_channel = apply_to_channel
+        self.in_seg = in_seg
+        self.out_seg = out_seg
 
     @torch.no_grad()  # disable gradients for efficiency
     def apply_transform(
@@ -575,8 +679,10 @@ class RandomFunctionGPU(ImageOnlyTransform):
     ) -> Tensor:
 
         # Apply function transform
+        seg_mask = params.get('seg', None)
         for c in self.apply_to_channel:
             x = input[:, c]  # shape [N, ...spatial...]
+            orig = x.clone()
             if self.retain_stats:
                 reduce_dims = tuple(range(1, x.dim()))
                 # store per-sample mean/std (shape [N])
@@ -602,6 +708,9 @@ class RandomFunctionGPU(ImageOnlyTransform):
                 om = orig_means.view(shape)
                 os = orig_stds.view(shape)
                 x = (x - nm) / (ns + eps) * os + om
+            if not seg_mask is None:
+                region_mode = _choose_region_mode(self.in_seg, self.out_seg, seg_mask)
+                x = _apply_region_mode(orig, x, seg_mask, region_mode)
             # Final safety: check if nan/inf appeared
             if torch.isnan(x).any() or torch.isinf(x).any():
                 print(f"Warning nan: {self.__class__.__name__}", flush=True)
@@ -630,6 +739,8 @@ class RandomInverseGPU(ImageOnlyTransform):
         apply_to_channel: list[int] = [0],  # Apply to first channel by default
         retain_stats: bool = False,
         same_on_batch: bool = False,
+        in_seg: float = 0.0,
+        out_seg: float = 0.0,
         p: float = 1.0,
         keepdim: bool = True,
         **kwargs,
@@ -637,6 +748,8 @@ class RandomInverseGPU(ImageOnlyTransform):
         super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
         self.apply_to_channel = apply_to_channel
         self.retain_stats = retain_stats
+        self.in_seg = in_seg
+        self.out_seg = out_seg
 
     @torch.no_grad()  # disable gradients for efficiency
     def apply_transform(
@@ -644,9 +757,11 @@ class RandomInverseGPU(ImageOnlyTransform):
     ) -> Tensor:
 
         # Inverse image
+        seg_mask = params.get('seg', None)
         for c in self.apply_to_channel:
             for i in range(input.shape[0]):
                 x= input[i, c]  # shape [...spatial...]
+                orig = x.clone()
                 if self.retain_stats:
                     orig_means = x.mean()
                     orig_stds = x.std()
@@ -658,6 +773,9 @@ class RandomInverseGPU(ImageOnlyTransform):
                     new_mean = x.mean()  # scalar
                     new_std = x.std()    # scalar
                     x = (x - new_mean) / (new_std + eps) * orig_stds + orig_means
+                if not seg_mask is None:
+                    region_mode = _choose_region_mode(self.in_seg, self.out_seg, seg_mask)
+                    x = _apply_region_mode(orig, x, seg_mask, region_mode)
                 # Final safety: check if nan/inf appeared
                 if torch.isnan(x).any() or torch.isinf(x).any():
                     print(f"Warning nan: {self.__class__.__name__}", flush=True)
@@ -687,6 +805,8 @@ class RandomHistogramEqualizationGPU(ImageOnlyTransform):
         apply_to_channel: list[int] = [0],  # Apply to first channel by default
         retain_stats: bool = False,
         same_on_batch: bool = False,
+        in_seg: float = 0.0,
+        out_seg: float = 0.0,
         p: float = 1.0,
         keepdim: bool = True,
         **kwargs,
@@ -694,6 +814,8 @@ class RandomHistogramEqualizationGPU(ImageOnlyTransform):
         super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
         self.retain_stats = retain_stats
         self.apply_to_channel = apply_to_channel
+        self.in_seg = in_seg
+        self.out_seg = out_seg
 
     @torch.no_grad()  # disable gradients for efficiency
     def apply_transform(
@@ -701,8 +823,10 @@ class RandomHistogramEqualizationGPU(ImageOnlyTransform):
     ) -> Tensor:
 
         # Apply histogram equalization transform
+        seg_mask = params.get('seg', None)
         for c in self.apply_to_channel:
             channel_data = input[:, c]  # shape [N, ...spatial...]
+            orig = channel_data.clone()
             
             if self.retain_stats:
                 reduce_dims = tuple(range(1, channel_data.dim()))
@@ -749,6 +873,10 @@ class RandomHistogramEqualizationGPU(ImageOnlyTransform):
                 om = orig_means.view(shape)
                 os = orig_stds.view(shape)
                 channel_data = (channel_data - nm) / (ns + eps) * os + om
+            
+            if not seg_mask is None:
+                region_mode = _choose_region_mode(self.in_seg, self.out_seg, seg_mask)
+                channel_data = _apply_region_mode(orig, channel_data, seg_mask, region_mode)
             # Final safety: check if nan/inf appeared
             if torch.isnan(channel_data).any() or torch.isinf(channel_data).any():
                 print(f"Warning nan: {self.__class__.__name__}", flush=True)
@@ -786,6 +914,8 @@ class RandomBiasFieldGPU(ImageOnlyTransform):
         apply_to_channel: list[int] = [0],
         invert: bool = False,
         retain_stats: bool = False,
+        in_seg: float = 0.0,
+        out_seg: float = 0.0,
         same_on_batch: bool = False,
         p: float = 1.0,
         keepdim: bool = True,
@@ -804,6 +934,8 @@ class RandomBiasFieldGPU(ImageOnlyTransform):
         self.apply_to_channel = apply_to_channel
         self.invert = invert
         self.retain_stats = retain_stats
+        self.in_seg = in_seg
+        self.out_seg = out_seg
 
     def _num_coeffs(self, dim: int) -> int:
         # Count coefficients generated by nested loops matching TorchIO logic.
@@ -868,6 +1000,7 @@ class RandomBiasFieldGPU(ImageOnlyTransform):
 
         coeffs = self._sample_coeffs(batch_size, device, dtype, dim)  # (n_coeffs, B)
         grids = self._make_grids(spatial, device, dtype)
+        seg_mask = params.get('seg', None)
 
         # Initialize bias map per batch element
         bias_map = torch.zeros((batch_size, *spatial), device=device, dtype=dtype)
@@ -906,6 +1039,7 @@ class RandomBiasFieldGPU(ImageOnlyTransform):
             if c < 0 or c >= input.shape[1]:
                 continue  # skip invalid channel index
             channel = input[:, c]
+            orig = channel.clone()
             if self.retain_stats:
                 reduce_dims = tuple(range(1, channel.dim()))
                 orig_mean = channel.mean(dim=reduce_dims)
@@ -922,6 +1056,9 @@ class RandomBiasFieldGPU(ImageOnlyTransform):
                 nm = new_mean.view(shape)
                 ns = new_std.view(shape)
                 channel = (channel - nm) / (ns + eps) * os + om
+            if not seg_mask is None:
+                region_mode = _choose_region_mode(self.in_seg, self.out_seg, seg_mask)
+                channel = _apply_region_mode(orig, channel, seg_mask, region_mode)
             # Final safety: check if nan/inf appeared
             if torch.isnan(channel).any() or torch.isinf(channel).any():
                 print(f"Warning nan: {self.__class__.__name__}", flush=True)
@@ -953,6 +1090,8 @@ class RandomClampGPU(ImageOnlyTransform):
         apply_to_channel: list[int] = [0],  # Apply to first channel by default
         retain_stats: bool = False,
         same_on_batch: bool = False,
+        in_seg: float = 0.0,
+        out_seg: float = 0.0,
         p: float = 1.0,
         keepdim: bool = True,
         **kwargs,
@@ -961,6 +1100,8 @@ class RandomClampGPU(ImageOnlyTransform):
         self.max_clamp_amount = max_clamp_amount
         self.apply_to_channel = apply_to_channel
         self.retain_stats = retain_stats
+        self.in_seg = in_seg
+        self.out_seg = out_seg
 
     @torch.no_grad()  # disable gradients for efficiency
     def apply_transform(
@@ -968,8 +1109,10 @@ class RandomClampGPU(ImageOnlyTransform):
     ) -> Tensor:
 
         # Apply clamping
+        seg_mask = params.get('seg', None)
         for c in self.apply_to_channel:
             channel_data = input[:, c]  # [N, ...spatial...]
+            orig = channel_data.clone()
             if self.retain_stats:
                 reduce_dims = tuple(range(1, channel_data.dim()))
                 # store per-sample mean/std (shape [N])
@@ -979,33 +1122,38 @@ class RandomClampGPU(ImageOnlyTransform):
             if self.same_on_batch:
                 min_clamp = torch.rand(1, device=input.device, dtype=input.dtype) * self.max_clamp_amount
                 max_clamp = 1.0 - (torch.rand(1, device=input.device, dtype=input.dtype) * self.max_clamp_amount)
+                x = channel_data.clone()
                 for i in range(input.shape[0]):
-                    channel_data[i] = torch.clamp(channel_data[i], min_clamp * torch.max(channel_data[i]), max_clamp * torch.max(channel_data[i]))
+                    x[i] = torch.clamp(x[i], min_clamp * torch.max(x[i]), max_clamp * torch.max(x[i]))
 
             else:
+                x = channel_data.clone()
                 for i in range(input.shape[0]):
                     min_clamp = torch.rand(1, device=input.device, dtype=input.dtype) * self.max_clamp_amount
                     max_clamp = 1.0 - (torch.rand(1, device=input.device, dtype=input.dtype) * self.max_clamp_amount)
-                    channel_data[i] = torch.clamp(channel_data[i], min_clamp * torch.max(channel_data[i]), max_clamp * torch.max(channel_data[i]))
+                    x[i] = torch.clamp(x[i], min_clamp * torch.max(x[i]), max_clamp * torch.max(x[i]))
             
             if self.retain_stats:
                 # Adjust mean and std to match original
                 eps = 1e-8
-                reduce_dims = tuple(range(1, channel_data.dim()))
-                new_mean = channel_data.mean(dim=reduce_dims)  # [N]
-                new_std = channel_data.std(dim=reduce_dims)    # [N]
+                reduce_dims = tuple(range(1, x.dim()))
+                new_mean = x.mean(dim=reduce_dims)  # [N]
+                new_std = x.std(dim=reduce_dims)    # [N]
                 # reshape stats to broadcast over spatial dims: [N,1,1,...]
-                shape = [channel_data.shape[0]] + [1] * (channel_data.dim() - 1)
+                shape = [x.shape[0]] + [1] * (x.dim() - 1)
                 nm = new_mean.view(shape)
                 ns = new_std.view(shape)
                 om = orig_means.view(shape)
                 os = orig_stds.view(shape)
-                channel_data = (channel_data - nm) / (ns + eps) * os + om
+                x = (x - nm) / (ns + eps) * os + om
+            if not seg_mask is None:
+                region_mode = _choose_region_mode(self.in_seg, self.out_seg, seg_mask)
+                x = _apply_region_mode(orig, x, seg_mask, region_mode)
             # Final safety: check if nan/inf appeared
-            if torch.isnan(channel_data).any() or torch.isinf(channel_data).any():
+            if torch.isnan(x).any() or torch.isinf(x).any():
                 print(f"Warning nan: {self.__class__.__name__}", flush=True)
                 continue
-            input[:, c] = channel_data
+            input[:, c] = x
 
         return input
 
@@ -1023,11 +1171,15 @@ class ZscoreNormalizationGPU(ImageOnlyTransform):
         self,
         apply_to_channel: list[int] = [0],
         keepdim: bool = True,
+        in_seg: float = 0.0,
+        out_seg: float = 0.0,
         p: float = 1.0,
         **kwargs,
     ) -> None:
         super().__init__(p=p, same_on_batch=False, keepdim=keepdim)
         self.apply_to_channel = apply_to_channel
+        self.in_seg = in_seg
+        self.out_seg = out_seg
 
     @torch.no_grad()
     def apply_transform(
@@ -1038,15 +1190,20 @@ class ZscoreNormalizationGPU(ImageOnlyTransform):
         transform: Optional[Tensor] = None,
     ) -> Tensor:
         # input: (N, C, [D,] H, W)
+        seg_mask = params.get('seg', None)
         for c in self.apply_to_channel:
             if c < 0 or c >= input.shape[1]:
                 continue  # skip invalid channel index
             channel = input[:, c]
+            orig = channel.clone()
             reduce_dims = tuple(range(1, channel.dim()))
             mean = channel.mean(dim=reduce_dims, keepdim=True)
             # use unbiased=False for stability, and clamp std to avoid division by ~0
             std = channel.std(dim=reduce_dims, keepdim=True, unbiased=False).clamp_min(1e-8)
             channel = (channel - mean) / std
+            if not seg_mask is None:
+                region_mode = _choose_region_mode(self.in_seg, self.out_seg, seg_mask)
+                channel = _apply_region_mode(orig, channel, seg_mask, region_mode)
             # Final safety: check if nan/inf appeared
             if torch.isnan(channel).any() or torch.isinf(channel).any():
                 print(f"Warning nan: {self.__class__.__name__}", flush=True)

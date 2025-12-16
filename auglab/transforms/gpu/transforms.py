@@ -30,6 +30,8 @@ class AugTransformsGPU(AugmentationSequentialCustom):
         if clamp_params is not None:
             transforms.append(RandomClampGPU(
                 max_clamp_amount=clamp_params.get('max_clamp_amount', 0.0),
+                in_seg=clamp_params.get('in_seg', 0.0),
+                out_seg=clamp_params.get('out_seg', 0.0),
                 retain_stats=clamp_params.get('retain_stats', False),
                 p=clamp_params.get('probability', 0),
             ))
@@ -40,6 +42,8 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             transforms.append(RandomGaussianNoiseGPU(
                 mean=noise_params.get('mean', 0.0),
                 std=noise_params.get('std', 1.0),
+                in_seg=noise_params.get('in_seg', 0.0),
+                out_seg=noise_params.get('out_seg', 0.0),
                 p=noise_params.get('probability', 0),
             ))
         
@@ -48,6 +52,8 @@ class AugTransformsGPU(AugmentationSequentialCustom):
         if gaussianblur_params is not None:
             transforms.append(RandomConvTransformGPU(
                 kernel_type=gaussianblur_params.get('kernel_type', 'GaussianBlur'),
+                in_seg=gaussianblur_params.get('in_seg', 0.0),
+                out_seg=gaussianblur_params.get('out_seg', 0.0),
                 p=gaussianblur_params.get('probability', 0),
                 sigma=gaussianblur_params.get('sigma', 1.0),
             ))
@@ -57,6 +63,8 @@ class AugTransformsGPU(AugmentationSequentialCustom):
         if brightness_params is not None:
             transforms.append(RandomBrightnessGPU(
                 brightness_range=brightness_params.get('brightness_range', [0.5, 1.5]),
+                in_seg=brightness_params.get('in_seg', 0.0),
+                out_seg=brightness_params.get('out_seg', 0.0),
                 p=brightness_params.get('probability', 0),
             ))
 
@@ -67,6 +75,8 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 gamma_range=gamma_params.get('gamma_range', [0.7, 1.5]),
                 p=gamma_params.get('probability', 0),
                 invert_image=False,
+                in_seg=gamma_params.get('in_seg', 0.0),
+                out_seg=gamma_params.get('out_seg', 0.0),
                 retain_stats=gamma_params.get('retain_stats', False),
             ))
 
@@ -75,6 +85,8 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             transforms.append(RandomGammaGPU(
                 gamma_range=inv_gamma_params.get('gamma_range', [0.7, 1.5]),
                 p=inv_gamma_params.get('probability', 0),
+                in_seg=inv_gamma_params.get('in_seg', 0.0),
+                out_seg=inv_gamma_params.get('out_seg', 0.0),
                 invert_image=True,
                 retain_stats=inv_gamma_params.get('retain_stats', False),
             ))
@@ -85,6 +97,8 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             transforms.append(RandomContrastGPU(
                 contrast_range=contrast_params.get('contrast_range', [0.75, 1.25]),
                 p=contrast_params.get('probability', 0),
+                in_seg=contrast_params.get('in_seg', 0.0),
+                out_seg=contrast_params.get('out_seg', 0.0),
                 retain_stats=contrast_params.get('retain_stats', False)
             ))
 
@@ -102,6 +116,8 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 transforms.append(RandomFunctionGPU(
                     func=func,
                     p=function_params.get('probability', 0),
+                    in_seg=function_params.get('in_seg', 0.0),
+                    out_seg=function_params.get('out_seg', 0.0),
                     retain_stats=function_params.get('retain_stats', False),
             ))
         
@@ -110,6 +126,8 @@ class AugTransformsGPU(AugmentationSequentialCustom):
         if inverse_params is not None:
             transforms.append(RandomInverseGPU(
                 p=inverse_params.get('probability', 0),
+                in_seg=inverse_params.get('in_seg', 0.0),
+                out_seg=inverse_params.get('out_seg', 0.0),
                 retain_stats=inverse_params.get('retain_stats', False),
             ))
         
@@ -118,6 +136,8 @@ class AugTransformsGPU(AugmentationSequentialCustom):
         if histo_params is not None:
             transforms.append(RandomHistogramEqualizationGPU(
                 p=histo_params.get('probability', 0),
+                in_seg=histo_params.get('in_seg', 0.0),
+                out_seg=histo_params.get('out_seg', 0.0),
                 retain_stats=histo_params.get('retain_stats', False),
             ))
 
@@ -146,6 +166,8 @@ class AugTransformsGPU(AugmentationSequentialCustom):
         if bias_field_params is not None:
             transforms.append(RandomBiasFieldGPU(
                 p=bias_field_params.get('probability', 0),
+                in_seg=bias_field_params.get('in_seg', 0.0),
+                out_seg=bias_field_params.get('out_seg', 0.0),
                 retain_stats=bias_field_params.get('retain_stats', False),
                 coefficients=bias_field_params.get('coefficients', 0.5),
             ))
@@ -191,6 +213,8 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             transforms.append(RandomConvTransformGPU(
                 kernel_type=scharr_params.get('kernel_type', 'Scharr'),
                 p=scharr_params.get('probability', 0),
+                in_seg=scharr_params.get('in_seg', 0.0),
+                out_seg=scharr_params.get('out_seg', 0.0),
                 retain_stats=scharr_params.get('retain_stats', True),
                 absolute=scharr_params.get('absolute', True),
             ))
@@ -201,6 +225,8 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             transforms.append(RandomConvTransformGPU(
                 kernel_type=unsharp_params.get('kernel_type', 'UnsharpMask'),
                 p=unsharp_params.get('probability', 0),
+                in_seg=unsharp_params.get('in_seg', 0.0),
+                out_seg=unsharp_params.get('out_seg', 0.0),
                 sigma=unsharp_params.get('sigma', 1.0),
                 unsharp_amount=unsharp_params.get('unsharp_amount', 1.5),
         ))
@@ -211,6 +237,8 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             transforms.append(RandomConvTransformGPU(
                 kernel_type=randconv_params.get('kernel_type', 'RandConv'),
                 p=randconv_params.get('probability', 0),
+                in_seg=randconv_params.get('in_seg', 0.0),
+                out_seg=randconv_params.get('out_seg', 0.0),
                 retain_stats=randconv_params.get('retain_stats', False),
                 kernel_sizes=randconv_params.get('kernel_sizes', [1,3,5,7]),
                 mix_prob=randconv_params.get('mix_prob', 0.0),
