@@ -326,11 +326,10 @@ class AugmentationSequentialOpsCustom(AugmentationSequentialOps):
                 ),
             )
         
-        if param.name.startswith("RandomRedistributeSegGPU"):
-            keys = [dk.name for dk in _data_keys]
-            if "MASK" in keys:
-                mask_index = keys.index("MASK")
-                param.data["seg"] = arg[mask_index]
+        keys = [dk.name for dk in _data_keys]
+        if "MASK" in keys:
+            mask_index = keys.index("MASK")
+            param.data["seg"] = arg[mask_index]
 
         outputs = []
         for inp, dcate in zip(arg, _data_keys):
