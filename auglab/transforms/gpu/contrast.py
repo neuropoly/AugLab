@@ -1162,18 +1162,21 @@ class RandomClampGPU(ImageOnlyTransform):
                 orig_stds = channel_data.std(dim=reduce_dims)
             
             if self.same_on_batch:
-                min_clamp = torch.rand(1, device=input.device, dtype=input.dtype) * self.max_clamp_amount
-                max_clamp = 1.0 - (torch.rand(1, device=input.device, dtype=input.dtype) * self.max_clamp_amount)
+                min_percentile = torch.rand(1, device=input.device, dtype=input.dtype) * self.max_clamp_amount
+                max_percentile = 1.0 - (torch.rand(1, device=input.device, dtype=input.dtype) * self.max_clamp_amount)
                 x = channel_data.clone()
                 for i in range(input.shape[0]):
-                    x[i] = torch.clamp(x[i], min_clamp * torch.max(x[i]), max_clamp * torch.max(x[i]))
-
+                    min_val = torch.quantile(x[i].flatten(), min_percentile)
+                    max_val = torch.quantile(x[i].flatten(), max_percentile)
+                    x[i] = torch.clamp(x[i], min_val, max_val)
             else:
                 x = channel_data.clone()
                 for i in range(input.shape[0]):
-                    min_clamp = torch.rand(1, device=input.device, dtype=input.dtype) * self.max_clamp_amount
-                    max_clamp = 1.0 - (torch.rand(1, device=input.device, dtype=input.dtype) * self.max_clamp_amount)
-                    x[i] = torch.clamp(x[i], min_clamp * torch.max(x[i]), max_clamp * torch.max(x[i]))
+                    min_percentile = torch.rand(1, device=input.device, dtype=input.dtype) * self.max_clamp_amount
+                    max_percentile = 1.0 - (torch.rand(1, device=input.device, dtype=input.dtype) * self.max_clamp_amount)
+                    min_val = torch.quantile(x[i].flatten(), min_percentile)
+                    max_val = torch.quantile(x[i].flatten(), max_percentile)
+                    x[i] = torch.clamp(x[i], min_val, max_val)
             
             if self.retain_stats:
                 # Adjust mean and std to match original
