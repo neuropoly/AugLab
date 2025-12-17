@@ -37,10 +37,11 @@ class AugTransformsGPU(AugmentationSequentialCustom):
     def _build_transforms(self) -> list[nn.Module]:
         transforms = []
 
-        transforms.append(ZscoreNormalizationGPU())
+        # transforms.append(ZscoreNormalizationGPU())
 
         # Flipping transforms
         flip_params = self.transform_params.get("FlipTransform")
+        # flip_params = None
         if flip_params is not None:
             transforms.append(
                 RandomFlipTransformGPU(
@@ -53,7 +54,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
 
         # Spatial transforms
         affine_params = self.transform_params.get("AffineTransform")
-        affine_params = None
+        # affine_params = None
         if affine_params is not None:
             transforms.append(
                 RandomAffine3DCustom(

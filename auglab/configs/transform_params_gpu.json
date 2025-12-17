@@ -9,25 +9,25 @@
     "GaussianBlurTransform": {
         "kernel_type": "GaussianBlur",
         "sigma": 1.0,
-        "probability": 0.10
+        "probability": 0.20
     },
     "UnsharpMaskTransform": {
         "kernel_type": "UnsharpMask",
         "sigma": 1.0,
         "unsharp_amount": 1.5,
-        "probability": 0.10
+        "probability": 0.00
     },
     "RandomConvTransform": {
         "kernel_type": "RandConv",
         "kernel_sizes": [3,5,7],
         "retain_stats": true,
         "mix_prob": 0.50,
-        "probability": 0.10
+        "probability": 0.00
     },
     "RedistributeSegTransform": {
         "in_seg": 0.2,
         "retain_stats": true,
-        "probability": 0.2
+        "probability": 0.5
     },
     "GaussianNoiseTransform": {
         "mean": 0.0,
@@ -55,15 +55,15 @@
     },
     "FunctionTransform": {
         "retain_stats": true,
-        "probability": 0.05
+        "probability": 0.00
     },
     "InverseTransform": {
         "retain_stats": true,
-        "probability": 0.15
+        "probability": 0.05
     },
     "HistogramEqualizationTransform": {
         "retain_stats": false,
-        "probability": 0.15
+        "probability": 0.1
     },
     "SimulateLowResTransform": {
         "scale": [0.5, 1.0],
@@ -75,12 +75,12 @@
         "scale": [0.6, 1.0],
         "crop": [1.0, 1.0],
         "same_on_batch": false,
-        "probability": 0.20
+        "probability": 0.00
     },
     "BiasFieldTransform": {
         "retain_stats": false,
         "coefficients": 0.5,
-        "probability": 0.20
+        "probability": 0.10
     },
     "FlipTransform": {
         "flip_axis": [0],
@@ -92,8 +92,8 @@
         "degrees": 5,
         "translate": [0.1, 0.1, 0.1],
         "scale": [0.7, 1.4],
-        "shear": [-10, 10, -10, 10, -10, 10],
+        "shear": [-5, 5, -5, 5, -5, 5],
         "resample": "bilinear",
-        "probability": 0.4
+        "probability": 0.2
     }
 }

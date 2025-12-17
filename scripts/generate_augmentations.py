@@ -178,10 +178,10 @@ def augment(
         # Generate augmentation
         if not overwrite and (output_image_path.exists() or output_seg_path.exists()):
             continue
-        
+
         # Transform data
         tensor_dict = train_transforms({'image': img_tensor.detach().clone(), 'segmentation': seg_tensor.detach().clone()})
-                
+
         img_out = zeros_like(img)
         img_out.data = tensor_dict['image'].squeeze(0).numpy()
         seg_out = zeros_like(seg)

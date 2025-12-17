@@ -147,6 +147,7 @@ class RandomAffine3DCustom(RigidAffineAugmentationBase3D):
         ).to(input)
         return transform
 
+    @torch.no_grad()
     def apply_transform(
         self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
     ) -> Tensor:
