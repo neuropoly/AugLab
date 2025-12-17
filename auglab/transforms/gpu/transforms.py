@@ -18,7 +18,13 @@ class AugTransformsGPU(AugmentationSequentialCustom):
         # Load transform parameters from JSON
         config_path = os.path.join(json_path)
         with open(config_path, 'r') as f:
-            self.transform_params = json.load(f)
+            config = json.load(f)
+        
+        if 'GPU' in config.keys():
+            self.transform_params = config['GPU']
+        else:
+            self.transform_params = config
+
         transforms = self._build_transforms()
         super().__init__(*transforms, data_keys=["input", "mask"], same_on_batch=True) # Same_on_batch to ensure mask are aligned with images correctly (custom) see AugmentationSequentialOpsCustom in base.py
 
