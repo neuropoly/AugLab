@@ -31,6 +31,103 @@ class AugTransformsGPU(AugmentationSequentialCustom):
     def _build_transforms(self) -> list[nn.Module]:
         transforms = []
 
+        # Flipping transforms
+        flip_params = self.transform_params.get('FlipTransform')
+        if flip_params is not None:
+            transforms.append(RandomFlipTransformGPU(
+                flip_axis=flip_params.get('flip_axis', [0]),
+                p=flip_params.get('probability', 0),
+                same_on_batch=flip_params.get('same_on_batch', False),
+                keepdim=flip_params.get('keepdim', True)
+            ))
+
+        # Spatial transforms
+        affine_params = self.transform_params.get('AffineTransform')
+        if affine_params is not None:
+            transforms.append(RandomAffine3DCustom(
+                degrees=affine_params.get('degrees', 10),
+                translate=affine_params.get('translate', [0.1, 0.1, 0.1]),
+                scale=affine_params.get('scale', [0.9, 1.1]),
+                shears=affine_params.get('shear', [-10, 10, -10, 10, -10, 10]),
+                resample=affine_params.get('resample', "bilinear"),
+                p=affine_params.get('probability', 0)
+            ))
+        
+        ## Transfer augmentations (TA)
+        # Inverse transform (max - pixel_value)
+        inverse_params = self.transform_params.get('InverseTransform')
+        if inverse_params is not None:
+            transforms.append(RandomInverseGPU(
+                p=inverse_params.get('probability', 0),
+                in_seg=inverse_params.get('in_seg', 0.0),
+                out_seg=inverse_params.get('out_seg', 0.0),
+                mix_in_out=inverse_params.get('mix_in_out', False),
+                retain_stats=inverse_params.get('retain_stats', False),
+            ))
+        
+        # Histogram manipulations
+        histo_params = self.transform_params.get('HistogramEqualizationTransform')
+        if histo_params is not None:
+            transforms.append(RandomHistogramEqualizationGPU(
+                p=histo_params.get('probability', 0),
+                in_seg=histo_params.get('in_seg', 0.0),
+                out_seg=histo_params.get('out_seg', 0.0),
+                mix_in_out=histo_params.get('mix_in_out', False),
+                retain_stats=histo_params.get('retain_stats', False),
+            ))
+        
+        # Redistribute segmentation values transform
+        redistribute_params = self.transform_params.get('RedistributeSegTransform')
+        if redistribute_params is not None:
+            transforms.append(RandomRedistributeSegGPU(
+                in_seg=redistribute_params.get('in_seg', 0.2),
+                retain_stats=redistribute_params.get('retain_stats', False),
+                p=redistribute_params.get('probability', 0),
+            ))
+
+        # Scharr filter
+        scharr_params = self.transform_params.get('ScharrTransform')
+        if scharr_params is not None:
+            transforms.append(RandomConvTransformGPU(
+                kernel_type=scharr_params.get('kernel_type', 'Scharr'),
+                p=scharr_params.get('probability', 0),
+                in_seg=scharr_params.get('in_seg', 0.0),
+                out_seg=scharr_params.get('out_seg', 0.0),
+                mix_in_out=scharr_params.get('mix_in_out', False),
+                retain_stats=scharr_params.get('retain_stats', True),
+                absolute=scharr_params.get('absolute', True),
+                mix_prob=scharr_params.get('mix_prob', 0.0),
+            ))
+
+        # Unsharp masking
+        unsharp_params = self.transform_params.get('UnsharpMaskTransform')
+        if unsharp_params is not None:
+            transforms.append(RandomConvTransformGPU(
+                kernel_type=unsharp_params.get('kernel_type', 'UnsharpMask'),
+                p=unsharp_params.get('probability', 0),
+                in_seg=unsharp_params.get('in_seg', 0.0),
+                out_seg=unsharp_params.get('out_seg', 0.0),
+                mix_in_out=unsharp_params.get('mix_in_out', False),
+                sigma=unsharp_params.get('sigma', 1.0),
+                unsharp_amount=unsharp_params.get('unsharp_amount', 1.5),
+                mix_prob=unsharp_params.get('mix_prob', 0.0),
+        ))
+            
+        # RandomConv transform
+        randconv_params = self.transform_params.get('RandomConvTransform')
+        if randconv_params is not None:
+            transforms.append(RandomConvTransformGPU(
+                kernel_type=randconv_params.get('kernel_type', 'RandConv'),
+                p=randconv_params.get('probability', 0),
+                in_seg=randconv_params.get('in_seg', 0.0),
+                out_seg=randconv_params.get('out_seg', 0.0),
+                mix_in_out=randconv_params.get('mix_in_out', False),
+                retain_stats=randconv_params.get('retain_stats', False),
+                kernel_sizes=randconv_params.get('kernel_sizes', [1,3,5,7]),
+                mix_prob=randconv_params.get('mix_prob', 0.0),
+        ))
+        
+        ## General enhancement (GE)
         # Clamping transform
         clamp_params = self.transform_params.get('ClampTransform')
         if clamp_params is not None:
@@ -134,28 +231,6 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                     mix_in_out=function_params.get('mix_in_out', False),
                     retain_stats=function_params.get('retain_stats', False),
             ))
-        
-        # Inverse transform (max - pixel_value)
-        inverse_params = self.transform_params.get('InverseTransform')
-        if inverse_params is not None:
-            transforms.append(RandomInverseGPU(
-                p=inverse_params.get('probability', 0),
-                in_seg=inverse_params.get('in_seg', 0.0),
-                out_seg=inverse_params.get('out_seg', 0.0),
-                mix_in_out=inverse_params.get('mix_in_out', False),
-                retain_stats=inverse_params.get('retain_stats', False),
-            ))
-        
-        # Histogram manipulations
-        histo_params = self.transform_params.get('HistogramEqualizationTransform')
-        if histo_params is not None:
-            transforms.append(RandomHistogramEqualizationGPU(
-                p=histo_params.get('probability', 0),
-                in_seg=histo_params.get('in_seg', 0.0),
-                out_seg=histo_params.get('out_seg', 0.0),
-                mix_in_out=histo_params.get('mix_in_out', False),
-                retain_stats=histo_params.get('retain_stats', False),
-            ))
 
         # Shape transforms (Cropping and Simulating low resolution)
         lowres_params = self.transform_params.get('SimulateLowResTransform')
@@ -189,82 +264,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 coefficients=bias_field_params.get('coefficients', 0.5),
             ))
         
-        # Redistribute segmentation values transform
-        redistribute_params = self.transform_params.get('RedistributeSegTransform')
-        if redistribute_params is not None:
-            transforms.append(RandomRedistributeSegGPU(
-                in_seg=redistribute_params.get('in_seg', 0.2),
-                retain_stats=redistribute_params.get('retain_stats', False),
-                p=redistribute_params.get('probability', 0),
-            ))
-
-        # Flipping transforms
-        flip_params = self.transform_params.get('FlipTransform')
-        if flip_params is not None:
-            transforms.append(RandomFlipTransformGPU(
-                flip_axis=flip_params.get('flip_axis', [0]),
-                p=flip_params.get('probability', 0),
-                same_on_batch=flip_params.get('same_on_batch', False),
-                keepdim=flip_params.get('keepdim', True)
-            ))
-
-        # Artifacts generation (Not implemented on GPU yet)
-
-        # Spatial transforms
-        affine_params = self.transform_params.get('AffineTransform')
-        if affine_params is not None:
-            transforms.append(RandomAffine3DCustom(
-                degrees=affine_params.get('degrees', 10),
-                translate=affine_params.get('translate', [0.1, 0.1, 0.1]),
-                scale=affine_params.get('scale', [0.9, 1.1]),
-                shears=affine_params.get('shear', [-10, 10, -10, 10, -10, 10]),
-                resample=affine_params.get('resample', "bilinear"),
-                p=affine_params.get('probability', 0)
-            ))
-
-        # Elastic transforms (Not implemented on GPU yet)
-
-        # Scharr filter
-        scharr_params = self.transform_params.get('ScharrTransform')
-        if scharr_params is not None:
-            transforms.append(RandomConvTransformGPU(
-                kernel_type=scharr_params.get('kernel_type', 'Scharr'),
-                p=scharr_params.get('probability', 0),
-                in_seg=scharr_params.get('in_seg', 0.0),
-                out_seg=scharr_params.get('out_seg', 0.0),
-                mix_in_out=scharr_params.get('mix_in_out', False),
-                retain_stats=scharr_params.get('retain_stats', True),
-                absolute=scharr_params.get('absolute', True),
-            ))
-
-        # Unsharp masking
-        unsharp_params = self.transform_params.get('UnsharpMaskTransform')
-        if unsharp_params is not None:
-            transforms.append(RandomConvTransformGPU(
-                kernel_type=unsharp_params.get('kernel_type', 'UnsharpMask'),
-                p=unsharp_params.get('probability', 0),
-                in_seg=unsharp_params.get('in_seg', 0.0),
-                out_seg=unsharp_params.get('out_seg', 0.0),
-                mix_in_out=unsharp_params.get('mix_in_out', False),
-                sigma=unsharp_params.get('sigma', 1.0),
-                unsharp_amount=unsharp_params.get('unsharp_amount', 1.5),
-        ))
-            
-        # RandomConv transform
-        randconv_params = self.transform_params.get('RandomConvTransform')
-        if randconv_params is not None:
-            transforms.append(RandomConvTransformGPU(
-                kernel_type=randconv_params.get('kernel_type', 'RandConv'),
-                p=randconv_params.get('probability', 0),
-                in_seg=randconv_params.get('in_seg', 0.0),
-                out_seg=randconv_params.get('out_seg', 0.0),
-                mix_in_out=randconv_params.get('mix_in_out', False),
-                retain_stats=randconv_params.get('retain_stats', False),
-                kernel_sizes=randconv_params.get('kernel_sizes', [1,3,5,7]),
-                mix_prob=randconv_params.get('mix_prob', 0.0),
-        ))
-        
-        # Z-score normalization
+        ## Random Z-score normalization
         zscore_params = self.transform_params.get('ZscoreNormalizationTransform')
         if zscore_params is not None:
             transforms.append(ZscoreNormalizationGPU(
