@@ -197,6 +197,11 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
     ) -> BasicTransform:
         transforms = []
 
+        configs_path = importlib.resources.files(configs)
+        json_path = os.environ.get("AUGLAB_PARAMS_GPU_JSON", str(configs_path / "transform_params_gpu.json"))
+        with open(json_path, 'r') as f:
+            config = json.load(f)
+
         ### Keep some nnunet transforms
         if do_dummy_2d_data_aug:
             ignore_axes = (0,)
@@ -205,17 +210,23 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
         else:
             patch_size_spatial = patch_size
             ignore_axes = None
+        
+        if 'nnUNetSpatialTransform' in config:
+            spatial_params = config['nnUNetSpatialTransform']
+        else:
+            spatial_params = {}
+
         transforms.append(
             SpatialTransform(
                 patch_size_spatial, 
-                patch_center_dist_from_border=0, 
-                random_crop=False, 
-                p_elastic_deform=0,
-                p_rotation=0,
+                patch_center_dist_from_border=spatial_params.get('patch_center_dist_from_border', 0),
+                random_crop=spatial_params.get('random_crop', False),
+                p_elastic_deform=spatial_params.get('p_elastic_deform', 0),
+                p_rotation=spatial_params.get('p_rotation', 0),
                 rotation=rotation_for_DA, 
-                p_scaling=0, 
-                scaling=(0.7, 1.4), 
-                p_synchronize_scaling_across_axes=1,
+                p_scaling=spatial_params.get('p_scaling', 0), 
+                scaling=spatial_params.get('scaling', (0.7, 1.4)), 
+                p_synchronize_scaling_across_axes=spatial_params.get('p_synchronize_scaling_across_axes', 1),
                 bg_style_seg_sampling=False, 
                 mode_seg='nearest'
             )
