@@ -145,7 +145,7 @@
         "scale": [0.7, 1.4],
         "shear": [-5, 5, -5, 5, -5, 5],
         "resample": "bilinear",
-        "probability": 0.2
+        "probability": 0
     },
     "nnUNetSpatialTransform": {
         "patch_center_dist_from_border": 80,
