@@ -29,7 +29,15 @@ def _choose_region_mode(p_in: float, p_out: float, seg_mask: Optional[torch.Tens
         return 'out'
     return 'all'
 
-def _apply_region_mode(orig: torch.Tensor, transformed: torch.Tensor, seg_mask: Optional[torch.Tensor], mode: str, normalize: bool = True, mix_in_out: bool = False) -> torch.Tensor:
+
+def _apply_region_mode(
+    orig: torch.Tensor,
+    transformed: torch.Tensor,
+    seg_mask: Optional[torch.Tensor],
+    mode: str,
+    normalize: bool = False,
+    mix_in_out: bool = False,
+) -> torch.Tensor:
     """Blend transformed with orig based on region selection mode.
 
     - mode 'all': return transformed
@@ -86,6 +94,7 @@ def _apply_region_mode(orig: torch.Tensor, transformed: torch.Tensor, seg_mask: 
         raise ValueError(f"Only 4D and 3D images are supported. Got {orig.dim()}D.")
 
     return m * transformed + (1.0 - m) * orig
+
 
 ## Convolution transform
 class RandomConvTransformGPU(ImageOnlyTransform):
@@ -195,7 +204,7 @@ class RandomConvTransformGPU(ImageOnlyTransform):
     ) -> Tensor:
         # Initialize kernel
         kernel = self.get_kernel(device=input.device)
-        
+
         # Load segmentation
         seg_mask = params.get('seg', None)
 
@@ -238,6 +247,11 @@ class RandomConvTransformGPU(ImageOnlyTransform):
 
                 x = torch.stack(out, dim=0)
 
+            # Mix with original based on mix_prob
+            if torch.rand(1).item() < self.mix_prob:
+                alpha = torch.rand(1, device=input.device)
+                x = alpha * orig + (1 - alpha) * x
+
             if self.retain_stats:
                 # Adjust mean and std to match original
                 eps = 1e-8
@@ -251,23 +265,18 @@ class RandomConvTransformGPU(ImageOnlyTransform):
                 om = orig_means.view(shape)
                 os = orig_stds.view(shape)
                 x = (x - nm) / (ns + eps) * os + om
-            
+
             # Apply region selection
             if not seg_mask is None:
                 region_mode = _choose_region_mode(self.in_seg, self.out_seg, seg_mask)
                 x = _apply_region_mode(orig, x, seg_mask, region_mode, mix_in_out=self.mix_in_out)
-            
-            # Mix with original based on mix_prob
-            if torch.rand(1).item() < self.mix_prob:
-                alpha = torch.rand(1, device=input.device)
-                x = alpha * orig + (1 - alpha) * x
-            
+
             # Final safety: check if nan/inf appeared
             if torch.isnan(x).any() or torch.isinf(x).any():
                 print(f"Warning nan: {self.__class__.__name__} with kernel={self.kernel_type}", flush=True)
                 continue
             input[:, c] = x
-        
+
         return input
 
 
@@ -794,6 +803,7 @@ class RandomInverseGPU(ImageOnlyTransform):
         in_seg: float = 0.0,
         out_seg: float = 0.0,
         mix_in_out: bool = False,
+        mix_prob: float = 0.0,
         p: float = 1.0,
         keepdim: bool = True,
         **kwargs,
@@ -803,6 +813,7 @@ class RandomInverseGPU(ImageOnlyTransform):
         self.retain_stats = retain_stats
         self.in_seg = in_seg
         self.out_seg = out_seg
+        self.mix_prob = mix_prob
         self.mix_in_out = mix_in_out
 
     @torch.no_grad()  # disable gradients for efficiency
@@ -821,12 +832,19 @@ class RandomInverseGPU(ImageOnlyTransform):
                     orig_stds = x.std()
                 max_val = x.max()
                 x = max_val - x
+
                 if self.retain_stats:
                     # Adjust mean and std to match original
                     eps = 1e-8
                     new_mean = x.mean()  # scalar
                     new_std = x.std()  # scalar
                     x = (x - new_mean) / (new_std + eps) * orig_stds + orig_means
+
+                # Mix with original based on mix_prob
+                if torch.rand(1).item() < self.mix_prob:
+                    alpha = torch.rand(1, device=input.device)
+                    x = alpha * orig + (1 - alpha) * x
+
                 if not seg_mask is None:
                     region_mode = _choose_region_mode(self.in_seg, self.out_seg, seg_mask[i])
                     x = _apply_region_mode(orig, x, seg_mask[i], region_mode, mix_in_out=self.mix_in_out)
@@ -835,7 +853,7 @@ class RandomInverseGPU(ImageOnlyTransform):
                     print(f"Warning nan: {self.__class__.__name__}", flush=True)
                     continue
                 input[i, c] = x
-        
+
         return input
 
 
@@ -863,6 +881,7 @@ class RandomHistogramEqualizationGPU(ImageOnlyTransform):
         in_seg: float = 0.0,
         out_seg: float = 0.0,
         mix_in_out: bool = False,
+        mix_prob: float = 0.0,
         p: float = 1.0,
         keepdim: bool = True,
         **kwargs,
@@ -873,6 +892,7 @@ class RandomHistogramEqualizationGPU(ImageOnlyTransform):
         self.in_seg = in_seg
         self.out_seg = out_seg
         self.mix_in_out = mix_in_out
+        self.mix_prob = mix_prob
 
     @torch.no_grad()  # disable gradients for efficiency
     def apply_transform(
@@ -884,7 +904,7 @@ class RandomHistogramEqualizationGPU(ImageOnlyTransform):
         for c in self.apply_to_channel:
             channel_data = input[:, c]  # shape [N, ...spatial...]
             orig = channel_data.clone()
-            
+
             if self.retain_stats:
                 reduce_dims = tuple(range(1, channel_data.dim()))
                 # store per-sample mean/std (shape [N])
@@ -917,6 +937,11 @@ class RandomHistogramEqualizationGPU(ImageOnlyTransform):
                 img_eq = cdf[indices]
                 channel_data[b] = img_eq.reshape(img_b.shape)
 
+                # Mix with original based on mix_prob
+                if torch.rand(1).item() < self.mix_prob:
+                    alpha = torch.rand(1, device=input.device)
+                    channel_data[b] = alpha * orig[b] + (1 - alpha) * channel_data[b]
+
             if self.retain_stats:
                 # Adjust mean and std to match original
                 eps = 1e-8
@@ -930,7 +955,7 @@ class RandomHistogramEqualizationGPU(ImageOnlyTransform):
                 om = orig_means.view(shape)
                 os = orig_stds.view(shape)
                 channel_data = (channel_data - nm) / (ns + eps) * os + om
-            
+
             if not seg_mask is None:
                 region_mode = _choose_region_mode(self.in_seg, self.out_seg, seg_mask)
                 channel_data = _apply_region_mode(orig, channel_data, seg_mask, region_mode, mix_in_out=self.mix_in_out)
