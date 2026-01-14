@@ -40,7 +40,7 @@ def _apply_region_mode(orig: torch.Tensor, transformed: torch.Tensor, seg_mask: 
     """
     if seg_mask is None or mode == 'all':
         return transformed
-    
+
     # Rescale transformed based on min max orig
     # Needed due to the important change in the image
     if orig.dim() == 4:
@@ -51,17 +51,19 @@ def _apply_region_mode(orig: torch.Tensor, transformed: torch.Tensor, seg_mask: 
             transformed_max = torch.amax(transformed, dim=tuple(range(1, transformed.dim())), keepdim=True)
             transformed = (transformed - transformed_min) / (transformed_max - transformed_min + 1e-8) * (orig_max - orig_min) + orig_min
 
-        m = seg_mask.to(transformed.dtype)
-        if mode == 'out':
-            m = 1.0 - m
+        m = seg_mask.to(transformed.dtype).clone()
         if mix_in_out:
             for i in range(seg_mask.shape[0]):
                 # Create a tensor with random one and zero
-                
+
                 o = torch.randint(0, 2, (seg_mask.shape[1],), device=seg_mask.device, dtype=seg_mask.dtype)
                 m[i] = m[i] * o.view(-1, 1, 1, 1)  # Broadcasting o to match the dimensions of m
-        
-        m = torch.sum(m, axis=1)
+
+        m = torch.argmax(m, axis=1) > 0
+        m = m.to(transformed.dtype)
+        if mode == "out":
+            m = 1.0 - m
+
     elif orig.dim() == 3:
         if normalize:
             orig_min = torch.amin(orig)
@@ -69,15 +71,17 @@ def _apply_region_mode(orig: torch.Tensor, transformed: torch.Tensor, seg_mask: 
             transformed_min = torch.amin(transformed)
             transformed_max = torch.amax(transformed)
             transformed = (transformed - transformed_min) / (transformed_max - transformed_min + 1e-8) * (orig_max - orig_min) + orig_min
-        
-        m = seg_mask.to(transformed.dtype)
-        if mode == 'out':
-            m = 1.0 - m
+
+        m = seg_mask.to(transformed.dtype).clone()
         if mix_in_out:
             # Create a tensor with random one and zero
             o = torch.randint(0, 2, (seg_mask.shape[0],), device=seg_mask.device, dtype=seg_mask.dtype)
             m = m * o.view(-1, 1, 1, 1)  # Broadcasting o to match the dimensions of m
-        m = torch.sum(m, axis=0)
+        m = torch.argmax(m, axis=0) > 0
+        m = m.to(transformed.dtype)
+        if mode == "out":
+            m = 1.0 - m
+
     else:
         raise ValueError(f"Only 4D and 3D images are supported. Got {orig.dim()}D.")
 
