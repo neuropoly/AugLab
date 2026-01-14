@@ -19,7 +19,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
         config_path = os.path.join(json_path)
         with open(config_path, 'r') as f:
             config = json.load(f)
-        
+
         if 'GPU' in config.keys():
             self.transform_params = config['GPU']
         else:
@@ -52,30 +52,36 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 resample=affine_params.get('resample', "bilinear"),
                 p=affine_params.get('probability', 0)
             ))
-        
+
         ## Transfer augmentations (TA)
         # Inverse transform (max - pixel_value)
         inverse_params = self.transform_params.get('InverseTransform')
         if inverse_params is not None:
-            transforms.append(RandomInverseGPU(
-                p=inverse_params.get('probability', 0),
-                in_seg=inverse_params.get('in_seg', 0.0),
-                out_seg=inverse_params.get('out_seg', 0.0),
-                mix_in_out=inverse_params.get('mix_in_out', False),
-                retain_stats=inverse_params.get('retain_stats', False),
-            ))
-        
+            transforms.append(
+                RandomInverseGPU(
+                    p=inverse_params.get("probability", 0),
+                    in_seg=inverse_params.get("in_seg", 0.0),
+                    out_seg=inverse_params.get("out_seg", 0.0),
+                    mix_in_out=inverse_params.get("mix_in_out", False),
+                    mix_prob=inverse_params.get("mix_prob", 0.0),
+                    retain_stats=inverse_params.get("retain_stats", False),
+                )
+            )
+
         # Histogram manipulations
         histo_params = self.transform_params.get('HistogramEqualizationTransform')
         if histo_params is not None:
-            transforms.append(RandomHistogramEqualizationGPU(
-                p=histo_params.get('probability', 0),
-                in_seg=histo_params.get('in_seg', 0.0),
-                out_seg=histo_params.get('out_seg', 0.0),
-                mix_in_out=histo_params.get('mix_in_out', False),
-                retain_stats=histo_params.get('retain_stats', False),
-            ))
-        
+            transforms.append(
+                RandomHistogramEqualizationGPU(
+                    p=histo_params.get("probability", 0),
+                    in_seg=histo_params.get("in_seg", 0.0),
+                    out_seg=histo_params.get("out_seg", 0.0),
+                    mix_in_out=histo_params.get("mix_in_out", False),
+                    mix_prob=histo_params.get("mix_prob", 0.0),
+                    retain_stats=histo_params.get("retain_stats", False),
+                )
+            )
+
         # Redistribute segmentation values transform
         redistribute_params = self.transform_params.get('RedistributeSegTransform')
         if redistribute_params is not None:
@@ -112,7 +118,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 unsharp_amount=unsharp_params.get('unsharp_amount', 1.5),
                 mix_prob=unsharp_params.get('mix_prob', 0.0),
         ))
-            
+
         # RandomConv transform
         randconv_params = self.transform_params.get('RandomConvTransform')
         if randconv_params is not None:
@@ -126,7 +132,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 kernel_sizes=randconv_params.get('kernel_sizes', [1,3,5,7]),
                 mix_prob=randconv_params.get('mix_prob', 0.0),
         ))
-        
+
         ## General enhancement (GE)
         # Clamping transform
         clamp_params = self.transform_params.get('ClampTransform')
@@ -151,7 +157,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 mix_in_out=noise_params.get('mix_in_out', False),
                 p=noise_params.get('probability', 0),
             ))
-        
+
         # Gaussian blur
         gaussianblur_params = self.transform_params.get('GaussianBlurTransform')
         if gaussianblur_params is not None:
@@ -199,7 +205,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 invert_image=True,
                 retain_stats=inv_gamma_params.get('retain_stats', False),
             ))
-        
+
         # nnUNetV2 Contrast transforms
         contrast_params = self.transform_params.get('ContrastTransform')
         if contrast_params is not None:
@@ -251,7 +257,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 one_dim=True,
                 same_on_batch=acq_params.get('same_on_batch', False)
         ))
-        
+
         # Bias field artifact
         bias_field_params = self.transform_params.get('BiasFieldTransform')
         if bias_field_params is not None:
@@ -263,7 +269,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 retain_stats=bias_field_params.get('retain_stats', False),
                 coefficients=bias_field_params.get('coefficients', 0.5),
             ))
-        
+
         ## Random Z-score normalization
         zscore_params = self.transform_params.get('ZscoreNormalizationTransform')
         if zscore_params is not None:
