@@ -4,6 +4,10 @@ import torch.nn as nn
 import torch
 import numpy as np
 
+from auglab.transforms.gpu.base import ImageOnlyTransform
+from typing import Any, Dict, Optional, Tuple, Union, List
+from kornia.core import Tensor
+
 from auglab.transforms.gpu.contrast import RandomConvTransformGPU, RandomGaussianNoiseGPU, RandomBrightnessGPU, RandomGammaGPU, RandomFunctionGPU, \
 RandomHistogramEqualizationGPU, RandomInverseGPU, RandomBiasFieldGPU, RandomContrastGPU, ZscoreNormalizationGPU, RandomClampGPU
 from auglab.transforms.gpu.spatial import RandomAffine3DCustom, RandomLowResTransformGPU, RandomFlipTransformGPU, RandomAcqTransformGPU
@@ -278,6 +282,80 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             ))
 
         return transforms
+
+class RandomChooseXTransformsGPU(ImageOnlyTransform):
+    """Randomly choose X transforms to apply from a given list of ImageOnlyTransform transforms (GPU version).
+
+    Args:
+        transforms_list: List of initialized ImageOnlyTransform to choose from.
+        num_transforms: Number of transforms to randomly select and apply.
+        same_on_batch: apply the same transformation across the batch.
+        p: probability for applying the X transforms to a batch. This param controls the augmentation
+          probabilities batch-wise.
+        keepdim: whether to keep the output shape the same as input ``True`` or broadcast it to the batch
+          form ``False``.
+
+    """
+
+    def __init__(
+        self,
+        transforms_list: List[ImageOnlyTransform],
+        num_transforms: int = 1,
+        same_on_batch: bool = False,
+        p: float = 1.0,
+        keepdim: bool = True,
+        **kwargs,
+    ) -> None:
+        super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
+        if not isinstance(num_transforms, int) or num_transforms < 0:
+            raise ValueError(f"num_transforms must be a non-negative int. Got {num_transforms!r}.")
+        self.transforms_list = nn.ModuleList(transforms_list)
+        self.num_transforms = num_transforms
+
+    def _apply_mix(self, x: Tensor, seg: Optional[Tensor]) -> Tensor:
+        if self.num_transforms == 0 or len(self.transforms_list) == 0:
+            return x
+
+        k = min(self.num_transforms, len(self.transforms_list))
+        # sample without replacement
+        idx = torch.randperm(len(self.transforms_list), device=x.device)[:k]
+
+        child_params: Dict[str, Tensor] = {}
+        if seg is not None:
+            child_params["seg"] = seg
+
+        for j in idx.tolist():
+            t = self.transforms_list[j]
+            if not hasattr(t, "apply_transform"):
+                raise TypeError(
+                    f"All transforms must implement apply_transform like ImageOnlyTransform. Got {type(t)}"
+                )
+            # Most contrast transforms perform their random sampling inside apply_transform.
+            t_flags = getattr(t, "flags", {})
+            x = t.apply_transform(x, child_params, t_flags, transform=None)
+        return x
+
+    @torch.no_grad()  # disable gradients for efficiency
+    def apply_transform(
+        self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
+    ) -> Tensor:
+        seg = params.get("seg", None)
+
+        if self.same_on_batch:
+            return self._apply_mix(input, seg)
+
+        batch_size = input.shape[0]
+        out = input
+        for i in range(batch_size):
+            xi = out[i : i + 1]
+            seg_i = None
+            if seg is not None and isinstance(seg, torch.Tensor) and seg.shape[0] == batch_size:
+                seg_i = seg[i : i + 1]
+            else:
+                seg_i = seg
+            xi = self._apply_mix(xi, seg_i)
+            out[i : i + 1] = xi
+        return out
 
 def normalize(arr: np.ndarray) -> np.ndarray:
     """
