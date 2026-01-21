@@ -326,6 +326,8 @@ class RandomChooseXTransformsGPU(ImageOnlyTransform):
 
         for j in idx.tolist():
             t = self.transforms_list[j]
+            if torch.rand(1, device=x.device, dtype=x.dtype) > t.p:
+                continue
             if not hasattr(t, "apply_transform"):
                 raise TypeError(
                     f"All transforms must implement apply_transform like ImageOnlyTransform. Got {type(t)}"
