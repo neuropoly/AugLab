@@ -161,6 +161,8 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
                  device: torch.device = torch.device('cuda')):
         super().__init__(plans, configuration, fold, dataset_json, device)
 
+        self.num_epochs = 1000
+
         # Load transform parameters from json file
         configs_path = importlib.resources.files(configs)
         json_path = os.environ.get("AUGLAB_PARAMS_GPU_JSON", str(configs_path / "transform_params_gpu.json"))
@@ -210,7 +212,7 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
         else:
             patch_size_spatial = patch_size
             ignore_axes = None
-        
+
         if 'nnUNetSpatialTransform' in config:
             spatial_params = config['nnUNetSpatialTransform']
         else:
@@ -234,7 +236,7 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
 
         if do_dummy_2d_data_aug:
             transforms.append(Convert2DTo3DTransform())
-        
+
         if use_mask_for_norm is not None and any(use_mask_for_norm):
             transforms.append(MaskImageTransform(
                 apply_to_channels=[i for i in range(len(use_mask_for_norm)) if use_mask_for_norm[i]],
@@ -284,8 +286,8 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
                     channel_in_seg=0
                 )
             )
-        
-        transforms.append(ZscoreNormalization())
+
+        # transforms.append(ZscoreNormalization())
 
         # NOTE: DownsampleSegForDSTransform is now handled in train_step for GPU augmentations
         # if deep_supervision_scales is not None:
@@ -323,13 +325,13 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
                     channel_in_seg=0
                 )
             )
-        
-        transforms.append(ZscoreNormalization())
+
+        # transforms.append(ZscoreNormalization())
 
         if deep_supervision_scales is not None:
             transforms.append(DownsampleSegForDSTransform(ds_scales=deep_supervision_scales))
         return ComposeTransforms(transforms)
-    
+
     def train_step(self, batch: dict) -> dict:
         data = batch['data']
         target = batch['target']
@@ -350,13 +352,13 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
         with autocast(self.device.type, enabled=True) if self.device.type == 'cuda' else dummy_context():            
             # Apply GPU augmentations to full-resolution data/target
             data, target = self.transforms(data, target)
-    
+
             # Create multi-scale targets for deep supervision after augmentation
             deep_supervision_scales = self._get_deep_supervision_scales()
             if deep_supervision_scales is not None:
                 ds_transform = DownsampleSegForDSTransformCustom(ds_scales=deep_supervision_scales)
                 target = ds_transform(target)
-    
+
             output = self.network(data)
             # del data
             l = self.loss(output, target)
@@ -519,4 +521,3 @@ class nnUNetTrainerDAExtHybrid(nnUNetTrainer):
             torch.nn.utils.clip_grad_norm_(self.network.parameters(), 12)
             self.optimizer.step()
         return {'loss': l.detach().cpu().numpy()}
-

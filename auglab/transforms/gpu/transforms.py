@@ -4,6 +4,10 @@ import torch.nn as nn
 import torch
 import numpy as np
 
+from auglab.transforms.gpu.base import ImageOnlyTransform
+from typing import Any, Dict, Optional, Tuple, Union, List
+from kornia.core import Tensor
+
 from auglab.transforms.gpu.contrast import RandomConvTransformGPU, RandomGaussianNoiseGPU, RandomBrightnessGPU, RandomGammaGPU, RandomFunctionGPU, \
 RandomHistogramEqualizationGPU, RandomInverseGPU, RandomBiasFieldGPU, RandomContrastGPU, ZscoreNormalizationGPU, RandomClampGPU
 from auglab.transforms.gpu.spatial import RandomAffine3DCustom, RandomLowResTransformGPU, RandomFlipTransformGPU, RandomAcqTransformGPU
@@ -19,7 +23,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
         config_path = os.path.join(json_path)
         with open(config_path, 'r') as f:
             config = json.load(f)
-        
+
         if 'GPU' in config.keys():
             self.transform_params = config['GPU']
         else:
@@ -52,30 +56,36 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 resample=affine_params.get('resample', "bilinear"),
                 p=affine_params.get('probability', 0)
             ))
-        
+
         ## Transfer augmentations (TA)
         # Inverse transform (max - pixel_value)
         inverse_params = self.transform_params.get('InverseTransform')
         if inverse_params is not None:
-            transforms.append(RandomInverseGPU(
-                p=inverse_params.get('probability', 0),
-                in_seg=inverse_params.get('in_seg', 0.0),
-                out_seg=inverse_params.get('out_seg', 0.0),
-                mix_in_out=inverse_params.get('mix_in_out', False),
-                retain_stats=inverse_params.get('retain_stats', False),
-            ))
-        
+            transforms.append(
+                RandomInverseGPU(
+                    p=inverse_params.get("probability", 0),
+                    in_seg=inverse_params.get("in_seg", 0.0),
+                    out_seg=inverse_params.get("out_seg", 0.0),
+                    mix_in_out=inverse_params.get("mix_in_out", False),
+                    mix_prob=inverse_params.get("mix_prob", 0.0),
+                    retain_stats=inverse_params.get("retain_stats", False),
+                )
+            )
+
         # Histogram manipulations
         histo_params = self.transform_params.get('HistogramEqualizationTransform')
         if histo_params is not None:
-            transforms.append(RandomHistogramEqualizationGPU(
-                p=histo_params.get('probability', 0),
-                in_seg=histo_params.get('in_seg', 0.0),
-                out_seg=histo_params.get('out_seg', 0.0),
-                mix_in_out=histo_params.get('mix_in_out', False),
-                retain_stats=histo_params.get('retain_stats', False),
-            ))
-        
+            transforms.append(
+                RandomHistogramEqualizationGPU(
+                    p=histo_params.get("probability", 0),
+                    in_seg=histo_params.get("in_seg", 0.0),
+                    out_seg=histo_params.get("out_seg", 0.0),
+                    mix_in_out=histo_params.get("mix_in_out", False),
+                    mix_prob=histo_params.get("mix_prob", 0.0),
+                    retain_stats=histo_params.get("retain_stats", False),
+                )
+            )
+
         # Redistribute segmentation values transform
         redistribute_params = self.transform_params.get('RedistributeSegTransform')
         if redistribute_params is not None:
@@ -112,7 +122,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 unsharp_amount=unsharp_params.get('unsharp_amount', 1.5),
                 mix_prob=unsharp_params.get('mix_prob', 0.0),
         ))
-            
+
         # RandomConv transform
         randconv_params = self.transform_params.get('RandomConvTransform')
         if randconv_params is not None:
@@ -126,7 +136,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 kernel_sizes=randconv_params.get('kernel_sizes', [1,3,5,7]),
                 mix_prob=randconv_params.get('mix_prob', 0.0),
         ))
-        
+
         ## General enhancement (GE)
         # Clamping transform
         clamp_params = self.transform_params.get('ClampTransform')
@@ -151,7 +161,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 mix_in_out=noise_params.get('mix_in_out', False),
                 p=noise_params.get('probability', 0),
             ))
-        
+
         # Gaussian blur
         gaussianblur_params = self.transform_params.get('GaussianBlurTransform')
         if gaussianblur_params is not None:
@@ -199,7 +209,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 invert_image=True,
                 retain_stats=inv_gamma_params.get('retain_stats', False),
             ))
-        
+
         # nnUNetV2 Contrast transforms
         contrast_params = self.transform_params.get('ContrastTransform')
         if contrast_params is not None:
@@ -251,7 +261,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 one_dim=True,
                 same_on_batch=acq_params.get('same_on_batch', False)
         ))
-        
+
         # Bias field artifact
         bias_field_params = self.transform_params.get('BiasFieldTransform')
         if bias_field_params is not None:
@@ -263,7 +273,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 retain_stats=bias_field_params.get('retain_stats', False),
                 coefficients=bias_field_params.get('coefficients', 0.5),
             ))
-        
+
         ## Random Z-score normalization
         zscore_params = self.transform_params.get('ZscoreNormalizationTransform')
         if zscore_params is not None:
@@ -272,6 +282,82 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             ))
 
         return transforms
+
+class RandomChooseXTransformsGPU(ImageOnlyTransform):
+    """Randomly choose X transforms to apply from a given list of ImageOnlyTransform transforms (GPU version).
+
+    Args:
+        transforms_list: List of initialized ImageOnlyTransform to choose from.
+        num_transforms: Number of transforms to randomly select and apply.
+        same_on_batch: apply the same transformation across the batch.
+        p: probability for applying the X transforms to a batch. This param controls the augmentation
+          probabilities batch-wise.
+        keepdim: whether to keep the output shape the same as input ``True`` or broadcast it to the batch
+          form ``False``.
+
+    """
+
+    def __init__(
+        self,
+        transforms_list: List[ImageOnlyTransform],
+        num_transforms: int = 1,
+        same_on_batch: bool = False,
+        p: float = 1.0,
+        keepdim: bool = True,
+        **kwargs,
+    ) -> None:
+        super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
+        if not isinstance(num_transforms, int) or num_transforms < 0:
+            raise ValueError(f"num_transforms must be a non-negative int. Got {num_transforms!r}.")
+        self.transforms_list = nn.ModuleList(transforms_list)
+        self.num_transforms = num_transforms
+
+    def _apply_mix(self, x: Tensor, seg: Optional[Tensor]) -> Tensor:
+        if self.num_transforms == 0 or len(self.transforms_list) == 0:
+            return x
+
+        k = min(self.num_transforms, len(self.transforms_list))
+        # sample without replacement
+        idx = torch.randperm(len(self.transforms_list), device=x.device)[:k]
+
+        child_params: Dict[str, Tensor] = {}
+        if seg is not None:
+            child_params["seg"] = seg
+
+        for j in idx.tolist():
+            t = self.transforms_list[j]
+            if torch.rand(1, device=x.device, dtype=x.dtype) > t.p:
+                continue
+            if not hasattr(t, "apply_transform"):
+                raise TypeError(
+                    f"All transforms must implement apply_transform like ImageOnlyTransform. Got {type(t)}"
+                )
+            # Most contrast transforms perform their random sampling inside apply_transform.
+            t_flags = getattr(t, "flags", {})
+            x = t.apply_transform(x, child_params, t_flags, transform=None)
+        return x
+
+    @torch.no_grad()  # disable gradients for efficiency
+    def apply_transform(
+        self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
+    ) -> Tensor:
+        seg = params.get("seg", None)
+
+        if self.same_on_batch:
+            return self._apply_mix(input, seg)
+
+        batch_size = input.shape[0]
+        out = input
+        for i in range(batch_size):
+            xi = out[i : i + 1]
+            seg_i = None
+            if seg is not None and isinstance(seg, torch.Tensor) and seg.shape[0] == batch_size:
+                seg_i = seg[i : i + 1]
+            else:
+                seg_i = seg
+            xi = self._apply_mix(xi, seg_i)
+            out[i : i + 1] = xi
+        return out
 
 def normalize(arr: np.ndarray) -> np.ndarray:
     """
