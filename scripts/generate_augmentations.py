@@ -198,12 +198,3 @@ def augment(
 if __name__ == '__main__':
 
     main()
-    # augment_mp(
-    #     data_json_path="auglab/configs/data/data.json",
-    #     transforms_json_path="auglab/configs/transform_params.json",
-    #     ofolder="/home/GRAMES.POLYMTL.CA/p118739/data_nvme_p118739/data/datasets/test-auglab/augmented",
-    #     augmentations_per_image=2,
-    #     overwrite=True,
-    #     max_workers=mp.cpu_count(),
-    #     quiet=False,
-    # )

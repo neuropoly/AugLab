@@ -2,11 +2,11 @@
 name = "auglab"
 version = "20260109"
 requires-python = ">=3.10"
-description = "AugLab investigates the influence of different data augmentation strategies on MRI training performance."
+description = "AugLab investigates the influence of different data augmentation strategies on CT/MRI training performance."
 readme = "README.md"
 authors = [
-    { name = "Nathan Molinier", email = "nathan.molinier@polymtl.ca"},
-    { name = "Hendrik Möller"},
+    { name = "BLINDED", email = "BLINDED"},
+    { name = "BLINDED"},
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
@@ -46,8 +46,8 @@ all = [
 auglab_add_nnunettrainer = "auglab.add_trainer:main"
 
 [project.urls]
-homepage = "https://github.com/neuropoly/AugLab"
-repository = "https://github.com/neuropoly/AugLab"
+homepage = "<blinded>"
+repository = "<blinded>"
 
 [build-system]
 requires = ["pip>=23", "setuptools>=67"]
