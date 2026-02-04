@@ -71,9 +71,9 @@ AUGLAB_PARAMS_GPU_JSON=/path/to/your/params.json nnUNetv2_train 100 3d_fullres 0
 
 ## How to use my data ?
 
-Scripts developped in this repository use JSON files to specify image and segmentation paths: see this <blinded example>.
+Scripts developped in this repository use JSON files to specify image and segmentation paths: see this *blinded example*.
 
 ## How do I specify my parameters ?
 
-To track parameters used during data augmentation, JSON files are also used: see this <blinded example>.
+To track parameters used during data augmentation, JSON files are also used: see this *blinded example*.
 
