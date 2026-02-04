@@ -161,6 +161,8 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
                  device: torch.device = torch.device('cuda')):
         super().__init__(plans, configuration, fold, dataset_json, device)
 
+        self.num_epochs = 1000
+
         # Load transform parameters from json file
         configs_path = importlib.resources.files(configs)
         json_path = os.environ.get("AUGLAB_PARAMS_GPU_JSON", str(configs_path / "transform_params_gpu.json"))
