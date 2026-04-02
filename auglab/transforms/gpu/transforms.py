@@ -10,7 +10,7 @@ from kornia.core import Tensor
 
 from auglab.transforms.gpu.contrast import RandomConvTransformGPU, RandomGaussianNoiseGPU, RandomBrightnessGPU, RandomGammaGPU, RandomFunctionGPU, \
 RandomHistogramEqualizationGPU, RandomInverseGPU, RandomBiasFieldGPU, RandomContrastGPU, ZscoreNormalizationGPU, RandomClampGPU
-from auglab.transforms.gpu.spatial import RandomAffine3DCustom, RandomLowResTransformGPU, RandomFlipTransformGPU, RandomAcqTransformGPU
+from auglab.transforms.gpu.spatial import RandomAffine3DCustom, RandomLowResTransformGPU, RandomFlipTransformGPU, RandomAcqTransformGPU, RandomCropTransformGPU
 from auglab.transforms.gpu.fromSeg import RandomRedistributeSegGPU
 from auglab.transforms.gpu.base import AugmentationSequentialCustom
 
@@ -248,7 +248,6 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             transforms.append(RandomLowResTransformGPU(
                 p=lowres_params.get('probability', 0),
                 scale=lowres_params.get('scale', [0.3, 1.0]),
-                crop=lowres_params.get('crop', [1.0, 1.0]),
                 same_on_batch=lowres_params.get('same_on_batch', False)
         ))
 
@@ -257,8 +256,16 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             transforms.append(RandomAcqTransformGPU(
                 p=acq_params.get('probability', 0),
                 scale=acq_params.get('scale', [0.3, 1.0]),
-                crop=acq_params.get('crop', [1.0, 1.0]),
                 one_dim=True,
+                same_on_batch=acq_params.get('same_on_batch', False)
+        ))
+            
+        crop_params = self.transform_params.get('CropTransform')
+        if crop_params is not None:
+            transforms.append(RandomCropTransformGPU(
+                p=crop_params.get('probability', 0),
+                crop=crop_params.get('crop', [1.0, 1.0]),
+                pos=crop_params.get('pos', [0.0, 1.0]),
                 same_on_batch=acq_params.get('same_on_batch', False)
         ))
 
@@ -446,9 +453,9 @@ if __name__ == "__main__":
     seg_tensor = torch.cat([seg_tensor, seg2_tensor], dim=0)
 
     # Move to GPU
-    img_tensor = img_tensor.cuda()
-    seg_tensor = seg_tensor.cuda()
-    augmentor = augmentor.cuda()
+    img_tensor = img_tensor.cuda(device=7)
+    seg_tensor = seg_tensor.cuda(device=7)
+    augmentor = augmentor.cuda(device=7)
 
     # Apply augmentations
     augmented_img, augmented_seg = augmentor(img_tensor.clone(), seg_tensor.clone())
@@ -497,5 +504,8 @@ if __name__ == "__main__":
     not_augmented_channel_line2 = np.concatenate([normalize(pad_numpy_array(augmented_img_np[1, 1, img_tensor_np.shape[2] // 2], pad_shape)), normalize(pad_numpy_array(augmented_img_np[1, 1, :, :, img_tensor_np.shape[4] // 2], pad_shape)), normalize(pad_numpy_array(augmented_img_np[1, 1, :, img_tensor_np.shape[3] // 2, :], pad_shape))], axis=1)
     combined_img2 = np.concatenate([img_line2, seg_line2, augmented_img_line2, augmented_seg_line2, not_augmented_channel_line2], axis=0)
     cv2.imwrite('img/combined2.png', combined_img2*255)
+
+    # cv2.imwrite('img/orig_img.png', normalize(pad_numpy_array(img_tensor_np[1, 0, img_tensor_np.shape[2] // 2], pad_shape))*255)
+    # cv2.imwrite('img/aug_img.png', normalize(pad_numpy_array(augmented_img_np[1, 0, img_tensor_np.shape[2] // 2], pad_shape))*255)
 
     print(augmentor)
