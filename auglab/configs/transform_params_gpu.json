@@ -117,13 +117,14 @@
     },
     "SimulateLowResTransform": {
         "scale": [0.5, 1.0],
-        "crop": [1.0, 1.0],
         "same_on_batch": false,
         "probability": 0.25
     },
     "AcqTransform": {
-        "scale": [0.6, 1.0],
-        "crop": [1.0, 1.0],
+        "scale": [0.1, 1.0],
+        "same_on_batch": false,
+        "probability": 0.2
+    },
         "same_on_batch": false,
         "probability": 0.00
     },
