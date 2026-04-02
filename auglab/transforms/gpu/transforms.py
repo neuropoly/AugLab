@@ -248,7 +248,6 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             transforms.append(RandomLowResTransformGPU(
                 p=lowres_params.get('probability', 0),
                 scale=lowres_params.get('scale', [0.3, 1.0]),
-                crop=lowres_params.get('crop', [1.0, 1.0]),
                 same_on_batch=lowres_params.get('same_on_batch', False)
         ))
 
@@ -257,7 +256,6 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             transforms.append(RandomAcqTransformGPU(
                 p=acq_params.get('probability', 0),
                 scale=acq_params.get('scale', [0.3, 1.0]),
-                crop=acq_params.get('crop', [1.0, 1.0]),
                 one_dim=True,
                 same_on_batch=acq_params.get('same_on_batch', False)
         ))
