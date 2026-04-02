@@ -190,10 +190,11 @@ class MaskSequentialOpsCustom(MaskSequentialOps):
             )
 
         elif isinstance(module, (K.RigidAffineAugmentationBase3D,)):
+            flags = module.flags | {"data_keys": [DataKey.MASK]}
             input = module.transform_masks(
                 input,
                 params=cls.get_instance_module_param(param),
-                flags=module.flags,
+                flags=flags,
                 transform=module.transform_matrix,
                 **extra_args,
             )

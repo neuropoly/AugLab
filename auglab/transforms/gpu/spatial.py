@@ -6,6 +6,7 @@ from kornia.geometry import deg2rad, get_affine_matrix3d, warp_affine3d
 from kornia.augmentation.random_generator.base import RandomGeneratorBase, UniformDistribution
 from kornia.augmentation.utils import _adapted_rsampling, _tuple_range_reader
 from kornia.utils.helpers import _extract_device_dtype
+from kornia.constants import DataKey
 import torch
 import torch.nn.functional as F
 
@@ -231,9 +232,13 @@ class RandomLowResTransformGPU(RigidAffineAugmentationBase3D):
             raise ValueError("params must contain 'scale' and 'crop' tensors")
 
         scales = params["scale"]  # shape [B, 3]
-        crops = params["crop"]  # shape [B, 3]
 
-        resample = self.flags.get("resample", "nearest")
+        if flags['data_keys'][0] is DataKey.IMAGE:
+            resample = "trilinear"
+        elif flags['data_keys'][0] is DataKey.MASK:
+            resample = "nearest"
+        else:
+            raise ValueError(f"Unsupported data key {flags['data_keys'][0]} for RandomLowResTransformGPU. Expected IMAGE or MASK.")
 
         # Define interpolation modes
         interp_down = resample
