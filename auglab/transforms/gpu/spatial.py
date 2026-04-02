@@ -536,13 +536,14 @@ class RandomCropTransformGPU(RigidAffineAugmentationBase3D):
     def __init__(
         self,
         crop: Tuple[float, float] = (1.0, 1.0),
+        pos: Tuple[float, float, float] = (0.5, 1), # Fraction of the pos
         same_on_batch: bool = False,
         p: float = 1.0,
         keepdim: bool = True,
         **kwargs,
     ) -> None:
         super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
-        self._param_generator = CropGenerator3D(crop=crop)
+        self._param_generator = CropGenerator3D(crop=crop, pos=pos)
 
     def compute_transformation(self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any]) -> Tensor:
         return self.identity_matrix(input)
@@ -570,35 +571,35 @@ class RandomCropTransformGPU(RigidAffineAugmentationBase3D):
         for b in range(batch_size):
             x = input[b]  # [C, D, H, W]
 
-            # determine crop fraction and crop size on the upsampled image
+            # determine crop fraction and crop size on the image
             cx, cy, cz = crops[b]
             # interpret crop as fraction of upsampled size to keep
             crop_D = max(1, int(round(float(cz) * D)))
             crop_H = max(1, int(round(float(cy) * H)))
             crop_W = max(1, int(round(float(cx) * W)))
 
-            # choose top-left-front corner within possible range (bias by crop fraction)
+            # determine pos fraction of the image
+            px, py, pz = pos[b]
+            
+            # center position
+            center_z = float(pz) * D
+            center_y = float(py) * H
+            center_x = float(px) * W
+
+            # choose top-left-front corner
+            start_z = int(round(center_z - crop_D / 2.0))
+            start_y = int(round(center_y - crop_H / 2.0))
+            start_x = int(round(center_x - crop_W / 2.0))
+
+            # clamp to valid limits
             max_z = max(0, D - crop_D)
             max_y = max(0, H - crop_H)
             max_x = max(0, W - crop_W)
 
-            if max_z == 0:
-                start_z = 0
-            else:
-                start_z = int(round(float(cz) * max_z)) if max_z > 0 else 0
-            if max_y == 0:
-                start_y = 0
-            else:
-                start_y = int(round(float(cy) * max_y)) if max_y > 0 else 0
-            if max_x == 0:
-                start_x = 0
-            else:
-                start_x = int(round(float(cx) * max_x)) if max_x > 0 else 0
+            z1 = max(0, min(start_z, max_z))
+            y1 = max(0, min(start_y, max_y))
+            x1 = max(0, min(start_x, max_x))
 
-            # crop patch from upsampled image (full resolution)
-            z1 = start_z
-            y1 = start_y
-            x1 = start_x
             z2 = z1 + crop_D
             y2 = y1 + crop_H
             x2 = x1 + crop_W
@@ -635,7 +636,7 @@ class CropGenerator3D(RandomGeneratorBase):
     def __init__(self, crop: Tuple[float, float], pos: Tuple[float, float], one_dim: bool = False) -> None:
         super().__init__()
         self.crop = crop
-        self.pos = pos # Position of the crop box, as a fraction of the possible range (e.g. 0.5 for centered, 0.0 for top-left-front corner, 1.0 for bottom-right-back corner)
+        self.pos = pos # Position of the crop box center, as a fraction of the image dimensions (e.g. 0.5 for centered)
         self.one_dim = one_dim
 
     def make_samplers(self, device: torch.device, dtype: torch.dtype) -> None:

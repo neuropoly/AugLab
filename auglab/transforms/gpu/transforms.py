@@ -265,6 +265,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             transforms.append(RandomCropTransformGPU(
                 p=crop_params.get('probability', 0),
                 crop=crop_params.get('crop', [1.0, 1.0]),
+                pos=crop_params.get('pos', [0.0, 1.0]),
                 same_on_batch=acq_params.get('same_on_batch', False)
         ))
 
