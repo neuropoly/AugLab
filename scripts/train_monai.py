@@ -33,6 +33,7 @@ from monai.transforms import (
 # Import AugLab custom transforms
 from auglab.utils.utils import fetch_image_config, parser2config, tuple_type_float, tuple_type_int, adjust_learning_rate, tuple2string, compute_dsc, get_validation_image
 import auglab.configs as configs
+# Import AugLab GPU transforms 🐞
 from auglab.transforms.gpu.transforms import AugTransformsGPU
 
 def get_parser():
@@ -104,7 +105,7 @@ def main():
         split='VALIDATION',
     )
     
-    # Load AugLab transform parameters
+    # Load AugLab transform parameters 🐞
     configs_path = importlib.resources.files(configs)
     if args.transforms is not None:
         gpu_transforms_path = args.transforms
@@ -174,7 +175,7 @@ def main():
         persistent_workers=False
     )
 
-    # Load AugLab GPU transforms
+    # Load AugLab GPU transforms and set on device 🐞
     gpu_transforms = AugTransformsGPU(json_path=gpu_transforms_path).to(device)
 
     # Create model
@@ -326,8 +327,10 @@ def train(data_loader, gpu_transforms, model, loss_func, optimizer, scaler, devi
         x, y = batch["image"].to(device), batch["segmentation"].to(device)
         
         with torch.amp.autocast('cuda'):
-            # Get output from model
+            # Apply GPU transforms 🐞
             x_aug, y_aug = gpu_transforms(x, y)
+            
+            # Get output from model
             y_pred = model(x_aug)
             
             # Compute loss for each element in the batch size
