@@ -33,12 +33,13 @@ from monai.transforms import (
 # Import AugLab custom transforms
 from auglab.utils.utils import fetch_image_config, parser2config, tuple_type_float, tuple_type_int, adjust_learning_rate, tuple2string, compute_dsc, get_validation_image
 import auglab.configs as configs
-from auglab.transforms.cpu.transforms import AugTransforms
+from auglab.transforms.gpu.transforms import AugTransformsGPU
 
 def get_parser():
     # parse command line arguments
     parser = argparse.ArgumentParser(description='Train monai network')
     parser.add_argument('--config', required=True, help='Config JSON file where every label used for TRAINING, VALIDATION and TESTING has its path specified ~/<your_path>/config_data.json (Required)')
+    parser.add_argument('--transforms', default=None, help='Transforms JSON with GPU parameters default="auglab/configs/transform_params_gpu.json"')
     parser.add_argument('--model', type=str, default='attunet', choices=['attunet', 'unetr', 'swinunetr'] , help='Model used for training. Options:["attunet", "unetr", "swinunetr"] (default="attunet")')
     parser.add_argument('--batch-size', type=int, default=3, help='Training batch size (default=3).')
     parser.add_argument('--nb-epochs', type=int, default=300, help='Number of training epochs (default=300).')
@@ -105,7 +106,10 @@ def main():
     
     # Load AugLab transform parameters
     configs_path = importlib.resources.files(configs)
-    json_path = configs_path / "transform_params.json"
+    if args.transforms is not None:
+        gpu_transforms_path = args.transforms
+    else:
+        gpu_transforms_path = configs_path / "transform_params_gpu.json"
 
     # Compose MONAI and AugLab transforms
     pixdim = args.pixdim
@@ -169,6 +173,9 @@ def main():
         pin_memory=False, 
         persistent_workers=False
     )
+
+    # Load AugLab GPU transforms
+    gpu_transforms = AugTransformsGPU(json_path=gpu_transforms_path).to(device)
 
     # Create model
     channels=args.channels
@@ -246,7 +253,7 @@ def main():
         print('\nEpoch: %d | LR: %.8f' % (epoch + 1, lr))
 
         # train for one epoch
-        train_loss, train_dsc = train(train_loader, model, loss_func, optimizer, scaler, device)
+        train_loss, train_dsc = train(train_loader, gpu_transforms, model, loss_func, optimizer, scaler, device)
 
         # 🐝 Plot loss and dice similarity coefficient
         wandb.log({"Loss_train/epoch": train_loss})
@@ -310,7 +317,7 @@ def validate(data_loader, model, loss_func, epoch, device):
     return loss.mean().item(), np.mean(dsc_list)
 
 
-def train(data_loader, model, loss_func, optimizer, scaler, device):
+def train(data_loader, gpu_transforms, model, loss_func, optimizer, scaler, device):
     model.train()
     dsc_list = [0]
     epoch_iterator = tqdm(data_loader, desc="Training (loss=X.X) (DSC=X.X)", dynamic_ncols=True)
@@ -320,14 +327,15 @@ def train(data_loader, model, loss_func, optimizer, scaler, device):
         
         with torch.amp.autocast('cuda'):
             # Get output from model
-            y_pred = model(x)
+            x_aug, y_aug = gpu_transforms(x, y)
+            y_pred = model(x_aug)
             
             # Compute loss for each element in the batch size
             loss = 0
-            loss = loss_func(y_pred, y)
+            loss = loss_func(y_pred, y_aug)
 
             # Calculate DSC
-            dsc = compute_dsc(y.detach().cpu().numpy(), y_pred.detach().cpu().numpy(), sigmoid=True)
+            dsc = compute_dsc(y_aug.detach().cpu().numpy(), y_pred.detach().cpu().numpy(), sigmoid=True)
             if dsc > 0:
                 dsc_list.append(dsc)
 
