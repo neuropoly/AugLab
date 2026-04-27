@@ -46,7 +46,7 @@ def get_parser():
     parser.add_argument('--schedule', type=tuple_type_float, default=tuple([0.3, 0.6, 0.9]), help='Fraction of the max epoch where the learning rate will be reduced of a factor gamma (default=(0.3, 0.6, 0.9)).')
     parser.add_argument('--gamma', type=float, default=0.1, help='Factor used to reduce the learning rate (default=0.1)')
     parser.add_argument('--channels', type=tuple_type_int, default=(32, 64, 128, 256), help='Channels if attunet selected (default=16,32,64,128,256)')
-    parser.add_argument('--patch-size', type=tuple_type_int, default=(96, 96, 96), help='Training patch size (default=(96, 96, 96)).')
+    parser.add_argument('--patch-size', type=tuple_type_int, default=(64, 64, 64), help='Training patch size (default=(64, 64, 64)).')
     parser.add_argument('--pixdim', type=tuple_type_float, default=(1, 1, 1), help='Training resolution in RSP orientation (default=(1, 1, 1)).')
     parser.add_argument('--lr', default=1e-4, type=float, metavar='LR', help='Initial learning rate (default=1e-4)')
     parser.add_argument('--weight-folder', type=str, default=os.path.abspath('weights/'), help='Folder where the weights will be stored and loaded. Will be created if does not exist. (default="src/ply/weights/3DGAN")')
