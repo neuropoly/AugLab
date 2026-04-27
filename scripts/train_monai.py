@@ -33,12 +33,14 @@ from monai.transforms import (
 # Import AugLab custom transforms
 from auglab.utils.utils import fetch_image_config, parser2config, tuple_type_float, tuple_type_int, adjust_learning_rate, tuple2string, compute_dsc, get_validation_image
 import auglab.configs as configs
-from auglab.transforms.cpu.transforms import AugTransforms
+# Import AugLab GPU transforms 🐞
+from auglab.transforms.gpu.transforms import AugTransformsGPU
 
 def get_parser():
     # parse command line arguments
     parser = argparse.ArgumentParser(description='Train monai network')
     parser.add_argument('--config', required=True, help='Config JSON file where every label used for TRAINING, VALIDATION and TESTING has its path specified ~/<your_path>/config_data.json (Required)')
+    parser.add_argument('--transforms', default=None, help='Transforms JSON with GPU parameters default="auglab/configs/transform_params_gpu.json"')
     parser.add_argument('--model', type=str, default='attunet', choices=['attunet', 'unetr', 'swinunetr'] , help='Model used for training. Options:["attunet", "unetr", "swinunetr"] (default="attunet")')
     parser.add_argument('--batch-size', type=int, default=3, help='Training batch size (default=3).')
     parser.add_argument('--nb-epochs', type=int, default=300, help='Number of training epochs (default=300).')
@@ -46,7 +48,7 @@ def get_parser():
     parser.add_argument('--schedule', type=tuple_type_float, default=tuple([0.3, 0.6, 0.9]), help='Fraction of the max epoch where the learning rate will be reduced of a factor gamma (default=(0.3, 0.6, 0.9)).')
     parser.add_argument('--gamma', type=float, default=0.1, help='Factor used to reduce the learning rate (default=0.1)')
     parser.add_argument('--channels', type=tuple_type_int, default=(32, 64, 128, 256), help='Channels if attunet selected (default=16,32,64,128,256)')
-    parser.add_argument('--patch-size', type=tuple_type_int, default=(96, 96, 96), help='Training patch size (default=(96, 96, 96)).')
+    parser.add_argument('--patch-size', type=tuple_type_int, default=(64, 64, 64), help='Training patch size (default=(64, 64, 64)).')
     parser.add_argument('--pixdim', type=tuple_type_float, default=(1, 1, 1), help='Training resolution in RSP orientation (default=(1, 1, 1)).')
     parser.add_argument('--lr', default=1e-4, type=float, metavar='LR', help='Initial learning rate (default=1e-4)')
     parser.add_argument('--weight-folder', type=str, default=os.path.abspath('weights/'), help='Folder where the weights will be stored and loaded. Will be created if does not exist. (default="src/ply/weights/3DGAN")')
@@ -103,9 +105,12 @@ def main():
         split='VALIDATION',
     )
     
-    # Load AugLab transform parameters
+    # Load AugLab transform parameters 🐞
     configs_path = importlib.resources.files(configs)
-    json_path = configs_path / "transform_params.json"
+    if args.transforms is not None:
+        gpu_transforms_path = args.transforms
+    else:
+        gpu_transforms_path = configs_path / "transform_params_gpu.json"
 
     # Compose MONAI and AugLab transforms
     pixdim = args.pixdim
@@ -122,8 +127,6 @@ def main():
             ),
             NormalizeIntensityd(keys=["image"], nonzero=False, channel_wise=False),
             RandCropByPosNegLabeld(keys=["image", "segmentation"], label_key="segmentation", spatial_size=patch_size, pos=3, neg=1, num_samples=3, allow_smaller=True),
-            # Insert AugLab transforms here
-            AugTransforms(json_path=str(json_path)),
             ResizeWithPadOrCropd(keys=["image", "segmentation"], spatial_size=patch_size)
         ]
     )
@@ -171,6 +174,9 @@ def main():
         pin_memory=False, 
         persistent_workers=False
     )
+
+    # Load AugLab GPU transforms and set on device 🐞
+    gpu_transforms = AugTransformsGPU(json_path=gpu_transforms_path).to(device)
 
     # Create model
     channels=args.channels
@@ -248,7 +254,7 @@ def main():
         print('\nEpoch: %d | LR: %.8f' % (epoch + 1, lr))
 
         # train for one epoch
-        train_loss, train_dsc = train(train_loader, model, loss_func, optimizer, scaler, device)
+        train_loss, train_dsc = train(train_loader, gpu_transforms, model, loss_func, optimizer, scaler, device)
 
         # 🐝 Plot loss and dice similarity coefficient
         wandb.log({"Loss_train/epoch": train_loss})
@@ -312,7 +318,7 @@ def validate(data_loader, model, loss_func, epoch, device):
     return loss.mean().item(), np.mean(dsc_list)
 
 
-def train(data_loader, model, loss_func, optimizer, scaler, device):
+def train(data_loader, gpu_transforms, model, loss_func, optimizer, scaler, device):
     model.train()
     dsc_list = [0]
     epoch_iterator = tqdm(data_loader, desc="Training (loss=X.X) (DSC=X.X)", dynamic_ncols=True)
@@ -321,15 +327,18 @@ def train(data_loader, model, loss_func, optimizer, scaler, device):
         x, y = batch["image"].to(device), batch["segmentation"].to(device)
         
         with torch.amp.autocast('cuda'):
+            # Apply GPU transforms 🐞
+            x_aug, y_aug = gpu_transforms(x, y)
+            
             # Get output from model
-            y_pred = model(x)
+            y_pred = model(x_aug)
             
             # Compute loss for each element in the batch size
             loss = 0
-            loss = loss_func(y_pred, y)
+            loss = loss_func(y_pred, y_aug)
 
             # Calculate DSC
-            dsc = compute_dsc(y.detach().cpu().numpy(), y_pred.detach().cpu().numpy(), sigmoid=True)
+            dsc = compute_dsc(y_aug.detach().cpu().numpy(), y_pred.detach().cpu().numpy(), sigmoid=True)
             if dsc > 0:
                 dsc_list.append(dsc)
 

@@ -68,6 +68,49 @@ AUGLAB_PARAMS_GPU_JSON=/path/to/your/params.json nnUNetv2_train 100 3d_fullres 0
 
 > ⚠️ **Warning** : To avoid any paths issues, please specify an absolute path to your JSON file.
 
+## Run Monai training with AugLab augmentations
+
+> To use AugLab augmentations in a MONAI training pipeline, refer to the example [training script](https://github.com/neuropoly/AugLab/blob/main/scripts/train_monai.py). Key implementation lines required for proper integration are marked with a 🐞 emoji in the comments.
+
+To run the Monai training script directly, you need to provide a config JSON (`config.json`) file with paths to the images and labels (ground truth) for TRAINING, VALIDATION and TESTING sets like this:
+```json
+{
+   "TYPE": "LABEL",
+   "TRAINING": [
+      {
+         "IMAGE": "/path/to/image1.nii.gz",
+         "LABEL": "/path/to/label1.nii.gz"
+      },
+      {
+         "IMAGE": "/path/to/image2.nii.gz",
+         "LABEL": "/path/to/label2.nii.gz"
+      }
+   ],
+   "VALIDATION": [
+      {
+         "IMAGE": "/path/to/image3.nii.gz",
+         "LABEL": "/path/to/label3.nii.gz"
+      },
+      {
+         "IMAGE": "/path/to/image4.nii.gz",
+         "LABEL": "/path/to/label4.nii.gz"
+      }
+   ],
+   "TESTING": [
+      {
+         "IMAGE": "/path/to/image5.nii.gz",
+         "LABEL": "/path/to/label5.nii.gz"
+      },
+   ]
+}
+```
+
+Then run the training script with the following command, specifying the path to your config JSON file and the path to your data augmentation parameters JSON file (if you want to use custom parameters, otherwise the default [transform_params_gpu.json](https://github.com/neuropoly/AugLab/blob/main/auglab/configs/transform_params_gpu.json) is used):
+```bash
+python scripts/train_monai.py --config <your_path>/config.json --transforms <your_path>/transform_params_gpu.json
+```
+
+Additional parameters can be specified—see `python scripts/train_monai.py -h` for details. If anything is unclear, feel free to open an issue.
 
 ## How to use my data ?
 
