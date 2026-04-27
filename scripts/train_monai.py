@@ -122,8 +122,6 @@ def main():
             ),
             NormalizeIntensityd(keys=["image"], nonzero=False, channel_wise=False),
             RandCropByPosNegLabeld(keys=["image", "segmentation"], label_key="segmentation", spatial_size=patch_size, pos=3, neg=1, num_samples=3, allow_smaller=True),
-            # Insert AugLab transforms here
-            AugTransforms(json_path=str(json_path)),
             ResizeWithPadOrCropd(keys=["image", "segmentation"], spatial_size=patch_size)
         ]
     )
