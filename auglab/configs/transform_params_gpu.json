@@ -43,6 +43,8 @@
     "RedistributeSegTransform": {
         "in_seg": 0.25,
         "retain_stats": true,
+        "std_noise_range": [0.1, 0.3],
+        "dilation_iterations_range": [1, 5],
         "probability": 0.4
     },
     "GaussianNoiseTransform": {

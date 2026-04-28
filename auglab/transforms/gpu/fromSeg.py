@@ -29,12 +29,16 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
         same_on_batch: bool = False,
         p: float = 1.0,
         keepdim: bool = True,
+        std_noise_range: list[float] = [0.1, 0.3],
+        dilation_iterations_range: list[int] = [1, 3],
         **kwargs,
     ) -> None:
         super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
         self.in_seg = in_seg
         self.apply_to_channel = apply_to_channel
         self.retain_stats = retain_stats
+        self.std_noise_range = std_noise_range
+        self.dilation_iterations_range = dilation_iterations_range
 
     @torch.no_grad()
     def apply_transform(
@@ -96,7 +100,8 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
 
                 # Vectorized dilation for all regions (3 iterations)
                 dilated = masks.float()
-                for _ in range(3):
+                dilation_iterations = torch.randint(self.dilation_iterations_range[0], self.dilation_iterations_range[1]+1, (1,), device=input.device)[0].item()
+                for _ in range(dilation_iterations):
                     if spatial_dims == 3:
                         dilated = F.max_pool3d(dilated.unsqueeze(0), 3, 1, 1).squeeze(0)
                     else:
@@ -125,8 +130,9 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
                 dil_stds = dil_vars.sqrt()
 
                 # redist_std per region
+                std_noise_range = torch.rand(1, device=input.device)[0] * (self.std_noise_range[1] - self.std_noise_range[0]) + self.std_noise_range[0]
                 redist_std = torch.maximum(
-                    torch.rand(R, device=input.device) * 0.2 + 0.4 * torch.abs((means - dil_means) * stds / (dil_stds + 1e-6)),
+                    torch.rand(R, device=input.device) * std_noise_range + 0.4 * torch.abs((means - dil_means) * stds / (dil_stds + 1e-6)),
                     torch.full((R,), 0.01, device=input.device, dtype=input.dtype)
                 )
 
