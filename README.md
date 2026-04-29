@@ -33,9 +33,9 @@ This repository contains:
 
 4. Install AugLab using one of the following commands:
    > **Note:** If you pull a new version from GitHub, make sure to rerun this command with the flag `--upgrade`
-   - nnunetv2 only usage
+   - nnunetv2 only usage (tested with nnunetv2==2.6.2)
    ```bash
-   python3 -m pip install -e .[nnunetv2]
+   python3 -m pip install -e . nnunetv2==2.6.2
    ```
    - full usage (with Monai and other dependencies)
    ```bash
