@@ -1,4 +1,9 @@
 {
+    "ImageContrastGPUTransform": {
+        "label_classes": [1,2,3],
+        "num_bins": 32,
+        "probability": 0.25
+    },
     "ScharrTransform": {
         "kernel_type": "Scharr",
         "absolute": true,

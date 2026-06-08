@@ -11,7 +11,9 @@ from kornia.core import Tensor
 from auglab.transforms.gpu.contrast import RandomConvTransformGPU, RandomGaussianNoiseGPU, RandomBrightnessGPU, RandomGammaGPU, RandomFunctionGPU, \
 RandomHistogramEqualizationGPU, RandomInverseGPU, RandomBiasFieldGPU, RandomContrastGPU, ZscoreNormalizationGPU, RandomClampGPU
 from auglab.transforms.gpu.spatial import RandomAffine3DCustom, RandomLowResTransformGPU, RandomFlipTransformGPU, RandomAcqTransformGPU, RandomCropTransformGPU
-from auglab.transforms.gpu.fromSeg import RandomRedistributeSegGPU
+from auglab.transforms.gpu.fromSeg import RandomRedistributeSegGPU, RandomV19ContrastGPU
+from auglab.transforms.gpu.domain_transfer import RandomDomainTransferGPU
+from auglab.transforms.synthseg.transforms import RandomSynthSegGPU
 from auglab.transforms.gpu.base import AugmentationSequentialCustom
 
 class AugTransformsGPU(AugmentationSequentialCustom):
@@ -57,7 +59,60 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 p=affine_params.get('probability', 0)
             ))
 
+        # SynthSeg generative augmentation: replace the image with a GMM synthesis
+        # of the segmentation (intensity-only here, so the mask stays consistent;
+        # geometric transforms above deform the labels first). All SynthSeg
+        # generator parameters are read straight from the config block.
+        synthseg_params = self.transform_params.get('SynthSeg')
+        if synthseg_params is not None:
+            synthseg_kwargs = {k: v for k, v in synthseg_params.items() if k != 'probability'}
+            transforms.append(RandomSynthSegGPU(
+                p=synthseg_params.get('probability', 1.0),
+                **synthseg_kwargs,
+            ))
+
         ## Transfer augmentations (TA)
+        #########################
+        # Replace Image with V19Contrast (Paul)
+        img_contrast_params = self.transform_params.get('ImageContrastGPUTransform')
+        if img_contrast_params is not None:
+            transforms.append(
+                RandomV19ContrastGPU(
+                    p=img_contrast_params.get("probability", 0),
+                    label_classes=img_contrast_params.get("label_classes", [1]),
+                    num_bins=img_contrast_params.get("num_bins", 32),
+                )
+            )
+
+        # Domain transfer: randomly re-render the image as another sequence/cluster (TA)
+        # Accept either the class-name key or the descriptive key.
+        domain_params = self.transform_params.get('RandomDomainTransferGPU') \
+            or self.transform_params.get('DomainTransferTransform')
+        if domain_params is not None:
+            transforms.append(
+                RandomDomainTransferGPU(
+                    bank_path=domain_params.get("bank_path", None),
+                    source_label=domain_params["source_label"],
+                    targets=domain_params.get("targets", None),
+                    include_self=domain_params.get("include_self", False),
+                    any_source=domain_params.get("any_source", False),
+                    sigma=domain_params.get("sigma", 2.0),
+                    apply_to_channel=domain_params.get("apply_to_channel", [0]),
+                    zscore_io=domain_params.get("zscore_io", "auto"),
+                    pct=domain_params.get("pct", 1.0),
+                    blend_targets=domain_params.get("blend_targets", 1),
+                    blend_concentration=domain_params.get("blend_concentration", 1.0),
+                    p_class_mix=domain_params.get("p_class_mix", 0.0),
+                    bias_field_std=domain_params.get("bias_field_std", 0.0),
+                    bias_scale=domain_params.get("bias_scale", 0.03),
+                    p_spatial_mix=domain_params.get("p_spatial_mix", 0.0),
+                    spatial_mix_scale=domain_params.get("spatial_mix_scale", 0.03),
+                    spatial_mix_gain=domain_params.get("spatial_mix_gain", 3.0),
+                    p=domain_params.get("probability", 0.0),
+                    same_on_batch=domain_params.get("same_on_batch", False),
+                )
+            )
+
         # Inverse transform (max - pixel_value)
         inverse_params = self.transform_params.get('InverseTransform')
         if inverse_params is not None:
