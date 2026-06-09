@@ -1,3 +1,5 @@
+import random
+
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -8,6 +10,78 @@ import torch.distributed as dist
 
 from auglab.transforms.gpu.base import ImageOnlyTransform
 
+
+# ── V26_6 / V26_6_2 helpers ──────────────────────────────────────────────────
+
+def _kmeans_1d(values: torch.Tensor, C: int, n_iter: int = 10) -> torch.Tensor:
+    """1-D K-means on foreground values. Returns (C,) centroids."""
+    centroids = torch.linspace(values.min().item(), values.max().item(), C, device=values.device)
+    for _ in range(n_iter):
+        d = torch.abs(values.unsqueeze(1) - centroids.unsqueeze(0))
+        lbl = torch.argmin(d, dim=1)
+        s = torch.zeros(C, device=values.device).scatter_add_(0, lbl, values)
+        n = torch.zeros(C, device=values.device).scatter_add_(0, lbl, torch.ones_like(values))
+        new_c = torch.where(n > 0, s / n, centroids)
+        if torch.allclose(centroids, new_c):
+            break
+        centroids = new_c
+    return centroids
+
+
+def _gaussian_blur_3d(x: torch.Tensor, sigma: float) -> torch.Tensor:
+    """Separable 3D Gaussian blur. x: (B, 1, D, H, W)."""
+    k_r = max(1, int(3.0 * sigma + 0.5))
+    k1d = torch.arange(-k_r, k_r + 1, dtype=x.dtype, device=x.device)
+    k1d = torch.exp(-0.5 * (k1d / sigma) ** 2)
+    k1d = k1d / k1d.sum()
+    pad = len(k1d) // 2
+    y = F.conv3d(x, k1d.view(1, 1, -1, 1, 1), padding=(pad, 0, 0))
+    y = F.conv3d(y, k1d.view(1, 1, 1, -1, 1), padding=(0, pad, 0))
+    y = F.conv3d(y, k1d.view(1, 1, 1, 1, -1), padding=(0, 0, pad))
+    return y.clamp(0, 1)
+
+
+def _voronoi_region_ids(
+    coords: torch.Tensor,
+    lbl_l: torch.Tensor,
+    fg: torch.Tensor,
+    C: int,
+    device: torch.device,
+    s_choices: List[int],
+    skip_sub_parc_prob: float,
+) -> tuple[torch.Tensor, int]:
+    """Spatially subdivide each K-means cluster into Voronoi sub-regions.
+
+    Returns (rid, R): per-voxel sub-region id and total region count.
+    """
+    N = lbl_l.shape[0]
+    rid = torch.zeros(N, dtype=torch.long, device=device)
+    offset = 0
+    for c in range(C):
+        c_mask = lbl_l == c
+        c_fg_mask = c_mask & (fg > 0)
+        n_fg = int(c_fg_mask.sum().item())
+        if n_fg == 0:
+            continue
+        if n_fg < 2 or torch.rand(1, device=device).item() < skip_sub_parc_prob:
+            S = 1
+        else:
+            s_idx = int(torch.rand(1, device=device).item() * len(s_choices))
+            S = min(s_choices[s_idx], n_fg)
+        if S <= 1:
+            rid = torch.where(c_mask, torch.full_like(rid, offset), rid)
+            offset += 1
+            continue
+        seed_idx = torch.multinomial(c_fg_mask.float(), S, replacement=False)
+        centroids_v = coords.index_select(0, seed_idx)
+        d = torch.cdist(coords, centroids_v)
+        sub = torch.argmin(d, dim=1)
+        rid = torch.where(c_mask, offset + sub, rid)
+        offset += S
+    return rid, offset
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _normal_pdf(x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor) -> torch.Tensor:
     inv = 1.0 / (std + 1e-6)
@@ -252,6 +326,216 @@ class RandomV19ContrastGPU(ImageOnlyTransform):
         # normalize back with z-score normalization
         guidance_map = _zscore_renorm(_minmax_denorm(guidance_map, vmin, vmax))
         return guidance_map
+
+
+class RandomV26_6_2ContrastGPU(ImageOnlyTransform):
+    """
+    AugLab GPU augmentation implementing V26_6_2 synthesis.
+
+    Pipeline (mirrors src/synthesis/v26_6_2_synthesis.py, self-contained):
+      1. Min-max normalise input to [0, 1] per sample.
+      2. V26_6 whole-image synthesis: 1-D K-means intensity parcellation →
+         Voronoi spatial sub-parcellation → per-region signed-alpha affine remap
+         y = μ + α·(x − mean_region), optional Gaussian blur.
+      3. Per-anatomical-label affine remap (V26_6_2 step): for each foreground
+         label, with probability `label_remap_prob`, independently remap that
+         label's voxels with a fresh (μ, α).
+      4. Optional second Gaussian blur, then foreground z-score.
+
+    Segmentation is read from params['seg'] (injected by AugLab's pipeline).
+    Supported formats: one-hot [B, C_seg, D, H, W] or index [B, 1, D, H, W].
+
+    Args:
+        c_choices: candidate K-means cluster counts.
+        s_choices: candidate Voronoi sub-region counts per cluster.
+        blur_sigmas: Gaussian blur sigma options (first pass and second pass each
+            sample independently; weighted toward 0 = no blur).
+        dark_threshold: voxels below this are treated as background.
+        n_kmeans_subsample: max foreground voxels used to fit K-means.
+        skip_parcellation_prob: probability of single global remap (no K-means).
+        skip_sub_parc_prob: per-cluster probability of skipping Voronoi sub-split.
+        alpha_magnitude_range: [min, max] for |alpha| in every affine remap.
+        label_remap_prob: per-label per-sample probability of applying label remap.
+        min_label_voxels: minimum voxels in a label to attempt the remap.
+        label_classes: if set, restrict label remap to these class indices
+            (None = all foreground classes present in the batch).
+        p: probability of applying the transform.
+    """
+
+    def __init__(
+        self,
+        c_choices: List[int] = [2, 3, 4, 5, 6],
+        s_choices: List[int] = [2, 3, 4, 5, 6, 7, 8, 9, 10],
+        blur_sigmas: List[float] = [0.0, 0.0, 0.0, 0.3, 0.5, 0.8],
+        dark_threshold: float = 0.01,
+        n_kmeans_subsample: int = 10_000,
+        skip_parcellation_prob: float = 0.10,
+        skip_sub_parc_prob: float = 0.40,
+        alpha_magnitude_range: List[float] = [0.5, 2.0],
+        label_remap_prob: float = 0.5,
+        min_label_voxels: int = 4,
+        label_classes: Optional[List[int]] = None,
+        p: float = 1.0,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(p=p, **kwargs)
+        self.c_choices = c_choices
+        self.s_choices = s_choices
+        self.blur_sigmas = blur_sigmas
+        self.dark_threshold = dark_threshold
+        self.n_kmeans_subsample = n_kmeans_subsample
+        self.skip_parcellation_prob = skip_parcellation_prob
+        self.skip_sub_parc_prob = skip_sub_parc_prob
+        self.alpha_magnitude_range = alpha_magnitude_range
+        self.label_remap_prob = label_remap_prob
+        self.min_label_voxels = min_label_voxels
+        self.label_classes = label_classes
+
+    @torch.no_grad()
+    def apply_transform(
+        self,
+        input: Tensor,
+        params: Dict[str, Any],
+        flags: Dict[str, Any],
+        transform: Optional[Tensor] = None,
+    ) -> Tensor:
+        seg_raw: Optional[torch.Tensor] = params.get("seg", None)
+
+        labels: Optional[torch.Tensor] = None
+        if seg_raw is not None and seg_raw.ndim == 5 and seg_raw.shape[1] > 1:
+            labels = collapse_onehot_to_index(seg_raw)
+        elif seg_raw is not None and seg_raw.ndim == 5 and seg_raw.shape[1] == 1:
+            labels = seg_raw.long()
+
+        B, _C, D, H, W = input.shape
+        N = D * H * W
+        device = input.device
+        eps = 1e-7
+        alpha_lo, alpha_hi = self.alpha_magnitude_range
+
+        # Min-max normalise channel-0 to [0, 1] per sample
+        flat_all = input[:, 0].float().reshape(B, N)
+        v_min = flat_all.min(dim=1).values.view(B, 1)
+        v_max = flat_all.max(dim=1).values.view(B, 1)
+        images_01 = ((flat_all - v_min) / (v_max - v_min + eps)).clamp(0, 1)
+
+        flat_m_all = (images_01 > self.dark_threshold).float()  # foreground mask
+
+        # Voxel coordinates (shared — same spatial dims for every sample)
+        coords = torch.stack(torch.meshgrid(
+            torch.arange(D, device=device, dtype=torch.float32),
+            torch.arange(H, device=device, dtype=torch.float32),
+            torch.arange(W, device=device, dtype=torch.float32),
+            indexing="ij"), dim=-1).reshape(N, 3)
+
+        # ── Step 1: V26_6 K-means + Voronoi per-region affine remap ──────────
+        synth_list = []
+        for i in range(B):
+            flat = images_01[i]
+            flat_m = flat_m_all[i]
+            n_fg = flat_m.sum()
+
+            if n_fg < 4 or torch.rand(1, device=device).item() < self.skip_parcellation_prob:
+                # Single global remap
+                b_mean_i = (flat * flat_m).sum() / n_fg.clamp(min=1)
+                mu = torch.rand(1, device=device).item()
+                sign = (torch.rand(1, device=device) > 0.5).float() * 2 - 1
+                mag = torch.rand(1, device=device) * (alpha_hi - alpha_lo) + alpha_lo
+                alpha = (sign * mag).item()
+                synth_i = (mu + alpha * (flat - b_mean_i)).clamp(0, 1) * flat_m
+            else:
+                C_k = self.c_choices[int(torch.rand(1, device=device).item() * len(self.c_choices))]
+                idx = torch.randint(0, N, (min(N, 40_000),), device=device)
+                samp = flat[idx]
+                sub_fg = samp[samp > self.dark_threshold][:self.n_kmeans_subsample]
+                if sub_fg.numel() < 4:
+                    sub_fg = samp[:self.n_kmeans_subsample]
+
+                centroids = _kmeans_1d(sub_fg, C_k)
+                sorted_c, sort_idx = torch.sort(centroids)
+                boundaries = (sorted_c[:-1] + sorted_c[1:]) / 2.0
+                lbl_s = torch.bucketize(flat, boundaries)
+                lbl_l = sort_idx[lbl_s].long()
+
+                rid, R = _voronoi_region_ids(
+                    coords, lbl_l, flat_m, C_k, device,
+                    self.s_choices, self.skip_sub_parc_prob,
+                )
+
+                s_c = torch.zeros(R, device=device).scatter_add_(0, rid, flat * flat_m)
+                n_c = torch.zeros(R, device=device).scatter_add_(0, rid, flat_m)
+                mean_c = s_c / n_c.clamp(min=eps)
+
+                mu_c = torch.rand(R, device=device)
+                mag_c = torch.rand(R, device=device) * (alpha_hi - alpha_lo) + alpha_lo
+                sign_c = (torch.rand(R, device=device) > 0.5).float() * 2 - 1
+                alp_c = mag_c * sign_c
+
+                synth_i = (mu_c[rid] + alp_c[rid] * (flat - mean_c[rid])).clamp(0, 1) * flat_m
+
+            synth_list.append(synth_i)
+
+        synth = torch.stack(synth_list)       # (B, N)
+        synth_01 = synth.reshape(B, 1, D, H, W)
+
+        sigma = random.choice(self.blur_sigmas)
+        if sigma > 0.0:
+            synth_01 = _gaussian_blur_3d(synth_01, sigma)
+            synth = synth_01.reshape(B, N)
+
+        # ── Step 2: per-anatomical-label affine remap (V26_6_2) ───────────────
+        if labels is not None:
+            if labels.shape[2:] != (D, H, W):
+                labels = F.interpolate(labels.float(), size=(D, H, W), mode="nearest").long()
+            lbl = labels[:, 0].reshape(B, N).clamp(min=0)
+
+            unique_classes = lbl.unique()
+            unique_classes = unique_classes[unique_classes > 0]
+            if self.label_classes is not None:
+                keep = torch.tensor(self.label_classes, device=device)
+                unique_classes = unique_classes[torch.isin(unique_classes, keep)]
+
+            for c in unique_classes:
+                c_val = int(c.item())
+                c_mask = (lbl == c_val).float()                         # (B, N)
+                c_cnt = c_mask.sum(dim=1, keepdim=True)                 # (B, 1)
+
+                apply = (
+                    (torch.rand(B, 1, device=device) < self.label_remap_prob)
+                    & (c_cnt >= self.min_label_voxels)
+                ).float()
+
+                if apply.sum() == 0:
+                    continue
+
+                c_mean = (synth * c_mask).sum(dim=1, keepdim=True) / c_cnt.clamp(min=1)
+
+                mu_c = torch.rand(B, 1, device=device)
+                mag_c = torch.rand(B, 1, device=device) * (alpha_hi - alpha_lo) + alpha_lo
+                sign_c = (torch.rand(B, 1, device=device) > 0.5).float() * 2 - 1
+                alp_c = mag_c * sign_c
+
+                new_vals = (mu_c + alp_c * (synth - c_mean)).clamp(0, 1)
+                write_mask = c_mask * apply
+                synth = synth * (1.0 - write_mask) + new_vals * write_mask
+
+        # ── Step 3: optional second blur, then foreground z-score ─────────────
+        synth_01 = synth.reshape(B, 1, D, H, W)
+        sigma2 = random.choice(self.blur_sigmas)
+        if sigma2 > 0.0:
+            synth_01 = _gaussian_blur_3d(synth_01, sigma2)
+            synth = synth_01.reshape(B, N)
+
+        b_sum = (synth * flat_m_all).sum(dim=1, keepdim=True)
+        b_cnt = flat_m_all.sum(dim=1, keepdim=True).clamp(min=1)
+        b_mean = b_sum / b_cnt
+        b_sq = ((synth - b_mean) * flat_m_all).pow(2).sum(dim=1, keepdim=True)
+        b_std = (b_sq / b_cnt + eps).sqrt()
+        synth_z = ((synth - b_mean) / b_std * flat_m_all).reshape(B, 1, D, H, W)
+
+        out = input.clone()
+        out[:, 0:1] = synth_z.to(input.dtype)
+        return out
 
 
 _SHARED_RNG_COUNTER = 0

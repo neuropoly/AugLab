@@ -11,7 +11,7 @@ from kornia.core import Tensor
 from auglab.transforms.gpu.contrast import RandomConvTransformGPU, RandomGaussianNoiseGPU, RandomBrightnessGPU, RandomGammaGPU, RandomFunctionGPU, \
 RandomHistogramEqualizationGPU, RandomInverseGPU, RandomBiasFieldGPU, RandomContrastGPU, ZscoreNormalizationGPU, RandomClampGPU
 from auglab.transforms.gpu.spatial import RandomAffine3DCustom, RandomLowResTransformGPU, RandomFlipTransformGPU, RandomAcqTransformGPU, RandomCropTransformGPU
-from auglab.transforms.gpu.fromSeg import RandomRedistributeSegGPU, RandomV19ContrastGPU
+from auglab.transforms.gpu.fromSeg import RandomRedistributeSegGPU, RandomV19ContrastGPU, RandomV26_6_2ContrastGPU
 from auglab.transforms.gpu.domain_transfer import RandomDomainTransferGPU
 from auglab.transforms.synthseg.transforms import RandomSynthSegGPU
 from auglab.transforms.gpu.base import AugmentationSequentialCustom
@@ -81,6 +81,26 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                     p=img_contrast_params.get("probability", 0),
                     label_classes=img_contrast_params.get("label_classes", [1]),
                     num_bins=img_contrast_params.get("num_bins", 32),
+                )
+            )
+
+        # Replace image with V26_6_2 contrast (K-means + Voronoi + per-label remap)
+        v26_6_2_params = self.transform_params.get('ImageContrastV26_6_2GPUTransform')
+        if v26_6_2_params is not None:
+            transforms.append(
+                RandomV26_6_2ContrastGPU(
+                    p=v26_6_2_params.get("probability", 1.0),
+                    c_choices=v26_6_2_params.get("c_choices", [2, 3, 4, 5, 6]),
+                    s_choices=v26_6_2_params.get("s_choices", [2, 3, 4, 5, 6, 7, 8, 9, 10]),
+                    blur_sigmas=v26_6_2_params.get("blur_sigmas", [0.0, 0.0, 0.0, 0.3, 0.5, 0.8]),
+                    dark_threshold=v26_6_2_params.get("dark_threshold", 0.01),
+                    n_kmeans_subsample=v26_6_2_params.get("n_kmeans_subsample", 10000),
+                    skip_parcellation_prob=v26_6_2_params.get("skip_parcellation_prob", 0.10),
+                    skip_sub_parc_prob=v26_6_2_params.get("skip_sub_parc_prob", 0.40),
+                    alpha_magnitude_range=v26_6_2_params.get("alpha_magnitude_range", [0.5, 2.0]),
+                    label_remap_prob=v26_6_2_params.get("label_remap_prob", 0.5),
+                    min_label_voxels=v26_6_2_params.get("min_label_voxels", 4),
+                    label_classes=v26_6_2_params.get("label_classes", None),
                 )
             )
 
