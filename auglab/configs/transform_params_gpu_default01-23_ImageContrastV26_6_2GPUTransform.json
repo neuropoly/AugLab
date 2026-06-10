@@ -1,8 +1,17 @@
 {
-    "ImageContrastGPUTransform": {
-        "label_classes": [1,2,3],
-        "num_bins": 32,
-        "probability": 0.25
+    "ImageContrastV26_6_2GPUTransform": {
+        "probability": 0.5,
+        "c_choices": [2, 3, 4, 5, 6],
+        "s_choices": [2, 3, 4, 5, 6, 7, 8, 9, 10],
+        "blur_sigmas": [0.0, 0.0, 0.0, 0.3, 0.5, 0.8],
+        "dark_threshold": 0.01,
+        "n_kmeans_subsample": 10000,
+        "skip_parcellation_prob": 0.10,
+        "skip_sub_parc_prob": 0.40,
+        "alpha_magnitude_range": [0.5, 2.0],
+        "label_remap_prob": 0.5,
+        "min_label_voxels": 4,
+        "label_classes": null
     },
     "ScharrTransform": {
         "kernel_type": "Scharr",
@@ -12,7 +21,7 @@
         "in_seg": 0.0,
         "out_seg": 0.0,
         "mix_in_out": true,
-        "probability": 0.25
+        "probability": 0.0
     },
     "GaussianBlurTransform": {
         "kernel_type": "GaussianBlur",
@@ -33,24 +42,22 @@
         "out_seg": 0.0,
         "mix_in_out": true,
         "mix_prob": 0.50,
-        "probability": 0.25
+        "probability": 0.0
     },
     "RandomConvTransform": {
         "kernel_type": "RandConv",
-        "kernel_sizes": [3,5,7],
+        "kernel_sizes": [3, 5, 7],
         "retain_stats": true,
         "in_seg": 0.0,
         "out_seg": 0.0,
         "mix_in_out": true,
         "mix_prob": 0.50,
-        "probability": 0.20
+        "probability": 0.0
     },
     "RedistributeSegTransform": {
         "in_seg": 0.25,
         "retain_stats": true,
-        "std_noise_range": [0.1, 0.3],
-        "dilation_iterations_range": [1, 5],
-        "probability": 0.4
+        "probability": 0.0
     },
     "GaussianNoiseTransform": {
         "mean": 0.0,
@@ -66,7 +73,7 @@
         "in_seg": 0.0,
         "out_seg": 0.0,
         "mix_in_out": true,
-        "probability": 0.00
+        "probability": 0.0
     },
     "BrightnessTransform": {
         "brightness_range": [0.75, 1.25],
@@ -112,7 +119,7 @@
         "out_seg": 0.0,
         "mix_in_out": true,
         "mix_prob": 0.00,
-        "probability": 0.25
+        "probability": 0.0
     },
     "HistogramEqualizationTransform": {
         "retain_stats": true,
@@ -120,23 +127,19 @@
         "out_seg": 0,
         "mix_in_out": true,
         "mix_prob": 0.60,
-        "probability": 0.25
+        "probability": 0.0
     },
     "SimulateLowResTransform": {
         "scale": [0.5, 1.0],
+        "crop": [1.0, 1.0],
         "same_on_batch": false,
         "probability": 0.25
     },
     "AcqTransform": {
-        "scale": [0.1, 1.0],
+        "scale": [0.6, 1.0],
+        "crop": [1.0, 1.0],
         "same_on_batch": false,
-        "probability": 0.2
-    },
-    "CropTransform": {
-        "crop": [0.5, 1.0],
-        "pos": [0.0, 1.0],
-        "same_on_batch": false,
-        "probability": 0.25
+        "probability": 0.00
     },
     "BiasFieldTransform": {
         "retain_stats": true,
