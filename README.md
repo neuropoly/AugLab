@@ -1,5 +1,22 @@
+[![arXiv](https://img.shields.io/badge/Paper-10.1007-blue)](https://arxiv.org/abs/2605.03098)
+[![Python Versions](https://img.shields.io/pypi/pyversions/spineps)](https://pypi.org/project/spineps/)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+
 # AugLab
 This repository investigates the influence of different data augmentation strategies on MRI training performance.
+
+## Citation
+
+If you use AugLab, please make sure to cite the following paper:
+
+```
+@article{molinier2026one,
+  title={One Sequence to Segment Them All: Efficient Data Augmentation for CT and MRI Cross-Domain 3D Spine Segmentation},
+  author={Molinier, Nathan and M{\"o}ller, Hendrik and Dagonneau, Thomas and Curto-Vilalta, Anna and Graf, Robert and Atad, Matan and Rueckert, Daniel and Kirschke, Jan S and Cohen-Adad, Julien},
+  journal={arXiv preprint arXiv:2605.03098},
+  year={2026}
+}
+```
 
 ## What is available ?
 
