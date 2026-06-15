@@ -1,4 +1,4 @@
-[![arXiv](https://img.shields.io/badge/Preprint-arXiv:2605.03098-blue)](https://arxiv.org/abs/2605.03098)
+[![arXiv](https://img.shields.io/badge/Preprint-arXiv:2605.03098-orange)](https://arxiv.org/abs/2605.03098)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 # AugLab
