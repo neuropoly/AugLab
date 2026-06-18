@@ -93,6 +93,8 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 in_seg=redistribute_params.get('in_seg', 0.2),
                 retain_stats=redistribute_params.get('retain_stats', False),
                 p=redistribute_params.get('probability', 0),
+                std_noise_range=redistribute_params.get('std_noise_range', [0.1, 0.3]),
+                dilation_iterations_range=redistribute_params.get('dilation_iterations_range', [1, 3]),
             ))
 
         # Scharr filter
@@ -395,22 +397,22 @@ if __name__ == "__main__":
     augmentor = AugTransformsGPU(json_path)
 
     # Load images and masks tensors
-    img_path = '/home/GRAMES.POLYMTL.CA/p118739/data_nvme_p118739/data/datasets/data-multi-subject/sub-amu02/anat/sub-amu02_T1w.nii.gz'
+    img_path = '/home/ge.polymtl.ca/p118739/data/datasets/data-multi-subject/sub-amu02/anat/sub-amu02_T1w.nii.gz'
     img = Image(img_path).change_orientation('RSP')
     img = resample_nib(img, new_size=[1,1,1], new_size_type='mm', interpolation='linear')
     img_tensor = torch.from_numpy(img.data.copy()).to(torch.float32)
 
-    seg_path = '/home/GRAMES.POLYMTL.CA/p118739/data_nvme_p118739/data/datasets/data-multi-subject/derivatives/labels/sub-amu02/anat/sub-amu02_T1w_label-spine_dseg.nii.gz'
+    seg_path = '/home/ge.polymtl.ca/p118739/data/datasets/data-multi-subject/derivatives/labels/sub-amu02/anat/sub-amu02_T1w_label-spine_dseg.nii.gz'
     seg = Image(seg_path).change_orientation('RSP')
     seg = resample_nib(seg, new_size=[1,1,1], new_size_type='mm', interpolation='nn')
     seg_tensor_all = torch.from_numpy(seg.data.copy())
     
-    img2_path = '/home/GRAMES.POLYMTL.CA/p118739/data_nvme_p118739/data/datasets/spider-challenge-2023/sub-002/anat/sub-002_acq-lowresSag_T2w.nii.gz'
+    img2_path = '/home/ge.polymtl.ca/p118739/data/datasets/spider-challenge-2023/sub-002/anat/sub-002_acq-lowresSag_T2w.nii.gz'
     img2 = Image(img2_path).change_orientation('RSP')
     img2 = resample_nib(img2, new_size=[1,1,1], new_size_type='mm', interpolation='linear')
     img2_tensor = torch.from_numpy(img2.data.copy()).to(torch.float32)
 
-    seg2_path = '/home/GRAMES.POLYMTL.CA/p118739/data_nvme_p118739/data/datasets/spider-challenge-2023/derivatives/labels/sub-002/anat/sub-002_acq-lowresSag_T2w_label-spine_dseg.nii.gz'
+    seg2_path = '/home/ge.polymtl.ca/p118739/data/datasets/spider-challenge-2023/derivatives/labels/sub-002/anat/sub-002_acq-lowresSag_T2w_label-spine_dseg.nii.gz'
     seg2 = Image(seg2_path).change_orientation('RSP')
     seg2 = resample_nib(seg2, new_size=[1,1,1], new_size_type='mm', interpolation='nn')
     seg2_tensor_all = torch.from_numpy(seg2.data.copy())
