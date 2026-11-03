@@ -222,19 +222,26 @@ augmentations do not touch this, because the problem is context, not intensity.
 context. For each selected sample it does six things:
 
 1. **Shift.** Image and segmentation move by the same whole-voxel shift, up to `shift` of
-   the patch per axis. At `shift: 1.0` the spine can leave the window entirely.
+   the patch per axis. At `shift: 1.0` the spine can leave the window entirely. With
+   `spare_label_faces` the shift never vacates a window face that a label comes within
+   `margin` voxels of. A structure may leave the window through that face, as at any
+   window edge, but never gets synthetic tissue against it, which would be an end the
+   anatomy does not have. The spine runs through both faces along its length, so it is
+   not shifted along that axis.
 2. **Find the fill region.** That is everything that is not scan: the padding (every
    channel exactly `pad_value`) plus whatever the shift vacated.
-3. **Split the background with EM.** The patch's own background is split into a random 3
-   to 10 intensity regions, the same way SynthSeg's label completion splits its
-   background. Only background voxels count: label 0, more than `margin` voxels from any
-   label, and off the padding's interpolated edge.
+3. **Split the background with EM.** The patch's background, as it arrives before the
+   shift, is split into a random 3 to 10 intensity regions, the same way SynthSeg's label
+   completion splits its background. Only background voxels count: label 0, more than
+   `margin` voxels from any label, and off the padding's interpolated edge. Fitting before
+   the shift matters: after a large one only a sliver of the scan is left in the window,
+   and a fill built from that sliver is a single region.
 4. **Post-process the region map.** A 3×3×3 majority filter removes the EM speckle, and a
    random diffeomorphic field (SynthSeg's) deforms the map.
 5. **Composite into the fill.** `layers` copies of the map, each randomly rotated, scaled,
    mirrored and translated, are composited into the fill region.
 6. **Render.** Each fill voxel is drawn from its region's mean and standard deviation,
-   measured on the patch itself. The within-region variation is spatially correlated
+   measured on the patch before the shift. The within-region variation is spatially correlated
    (σ = 1 voxel), because iid draws read as grain next to the smooth scan. The result is
    then blurred as SynthSeg blurs, and its label stays 0.
 
@@ -245,6 +252,7 @@ context. For each selected sample it does six things:
 | `margin` | `4` | voxels between a label and the background used to build the fill |
 | `layers` | `6` | warped copies of the region map composited into the fill |
 | `pad_value` | `0.0` | the intensity that marks padding; nnU-Net pads with 0 |
+| `spare_label_faces` | `true` | never vacate a window face a label touches (step 1) |
 | `p` | `0.5` | probability per sample |
 
 Things to know before using it:
@@ -256,6 +264,9 @@ Things to know before using it:
 * **The logged training loss rises.** A window the shift has emptied of spine has no
   foreground, so its Dice term is about 0 and cross-entropy does the work. The loss curve
   is therefore not comparable with a run without the transform.
+* **Sparing reads the segmentation.** It is orientation-free: which axis the spine runs
+  along is read off each window's labels, not configured. Without a segmentation nothing
+  is spared.
 * **Pipeline position matters.** The transform runs right after `RandomAffineGPU` and
   before every intensity transform, so the synthesised background is augmented like real
   tissue. A label-to-image generator later in the pipeline (SynthSeg, PALETTE synthesis)

@@ -46,7 +46,8 @@
                 3,
                 10
             ],
-            "shift": 0.5
+            "shift": 0.5,
+            "spare_label_faces": true
         },
         "RandomSynthSegGPU": {
             "apply_bias_field": true,
