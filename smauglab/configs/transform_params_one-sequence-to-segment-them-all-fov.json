@@ -31,7 +31,7 @@
             "p": 0.0
         },
         "RandomFOVExtensionGPU": {
-            "shift": 0.5,
+            "shift": 1.0,
             "regions": [
                 3,
                 10
@@ -39,6 +39,7 @@
             "margin": 4,
             "layers": 6,
             "pad_value": 0.0,
+            "spare_label_faces": true,
             "p": 0.5
         },
         "RandomInverseGPU": {

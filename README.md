@@ -277,9 +277,9 @@ Things to know before using it:
     it can become one of the EM regions.
   * With `use_mask_for_norm`, everything outside the body is 0, so it gets filled.
 
-`smauglab/configs/transform_params_one-sequence-to-segment-them-all-fov.json` (`ae065824`)
-is the paper's Ours config (`c69b9872`) plus this transform at the defaults above. Nothing
-else changes.
+`smauglab/configs/transform_params_one-sequence-to-segment-them-all-fov.json` (`d35b9d91`)
+is the paper's Ours config (`c69b9872`) plus this transform at the defaults above, except
+`shift: 1.0`. That is the best arm of the Dataset803 screen. Nothing else changes.
 
 ## Available augmentations
 
