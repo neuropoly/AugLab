@@ -1450,6 +1450,11 @@ class RandomExpGPU(_RandomNamedFunctionGPU):
     linear map of the input cannot explain is 1.6% on a uniform input. Setting the
     range draws a stronger member of the same family per sample; None keeps the fixed
     function and draws nothing. `[1, 5]` reaches 19% at k=4.
+
+    Exp is convex at the bright end, so a large rate pushes the brightest voxels far out
+    once the stats are restored: measured on 128^3 spine patches (Dixon in-phase / CT),
+    the largest |z| is 5.6 / 8.4 at k=1, 9.3 / 11.8 at k=2.5 and 21 / 19 at k=5. Keep the
+    upper rate near 2.5 unless the outliers are wanted.
     """
 
     function = staticmethod(torch.exp)
