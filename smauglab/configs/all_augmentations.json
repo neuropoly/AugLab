@@ -82,7 +82,8 @@
             "shearing_bounds": 0.012,
             "svf_integration_steps": 7,
             "thickness": null,
-            "translation_bounds": false
+            "translation_bounds": false,
+            "zscore_output": false
         },
         "RandomPaletteGPU": {
             "alpha_magnitude_range": [
