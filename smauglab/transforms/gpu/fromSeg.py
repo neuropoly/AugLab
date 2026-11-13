@@ -1,3 +1,5 @@
+import functools
+import math
 from collections.abc import Sequence
 from typing import Any
 
@@ -6,7 +8,7 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 
 from smauglab.registry import AugId, AugType, Backend, register
-from smauglab.transforms.gpu.base import ImageOnlyTransform
+from smauglab.transforms.gpu.base import ImageOnlyTransform, segmentation_from
 from smauglab.transforms.kernels import gaussian_blur3d
 from smauglab.transforms.rng import shared_choice
 
@@ -14,17 +16,58 @@ from smauglab.transforms.rng import shared_choice
 
 
 def _kmeans_1d(values: torch.Tensor, C: int, n_iter: int = 10) -> torch.Tensor:
-    """1-D K-means on foreground values. Returns (C,) centroids."""
-    centroids = torch.linspace(values.min().item(), values.max().item(), C, device=values.device)
+    """1-D K-means on foreground values. Returns (C,) centroids.
+
+    Lloyd's algorithm on sorted data, which is the same algorithm the dense version
+    ran but with each step costing O(C) instead of O(n*C):
+
+    * In one dimension with sorted centroids, nearest-centroid assignment is an
+      interval split at the midpoints, so the cluster boundaries come from a
+      `searchsorted` over the sorted values rather than an `argmin` over an
+      `n x C` distance matrix.
+    * Cluster sums then come from differences of one prefix sum, instead of a
+      `scatter_add_` of n values into C bins -- which on CUDA means every thread
+      contending for one of a handful of addresses, and measured as the single most
+      expensive operation in `RandomPaletteGPU`.
+    * The `torch.allclose` convergence test is gone. It was a host synchronisation
+      on every iteration, and the loop body it guards is now a few kernels over C
+      elements; waiting for the GPU cost more than the iterations it saved.
+
+    The prefix sum is accumulated in float64. A float32 running total over ten
+    thousand values loses enough low-order bits that two nearby cluster boundaries
+    can disagree about which side a value fell on, and the result is an augmentation
+    whose region map depends on the subsample size.
+    """
+    device = values.device
+    v_min, v_max = values.min(), values.max()
+    if C <= 1:
+        return v_min.reshape(1)
+
+    # `torch.linspace(a, b, C)`, written out: the last point is `b` exactly, not
+    # `a + (C-1)*step`, and starting K-means from a different point can land it in a
+    # different local optimum.
+    step = (v_max - v_min) / (C - 1)
+    centroids = v_min + step * torch.arange(C, device=device, dtype=values.dtype)
+    centroids = torch.cat([centroids[:-1], v_max.reshape(1)])
+
+    ordered, _ = torch.sort(values)
+    prefix = torch.cat([torch.zeros(1, device=device, dtype=torch.float64), ordered.double().cumsum(0)])
+    n = ordered.numel()
+    tail = torch.full((1,), n, dtype=torch.long, device=device)
+    head = torch.zeros(1, dtype=torch.long, device=device)
+
     for _ in range(n_iter):
-        d = torch.abs(values.unsqueeze(1) - centroids.unsqueeze(0))
-        lbl = torch.argmin(d, dim=1)
-        s = torch.zeros(C, device=values.device).scatter_add_(0, lbl, values)
-        n = torch.zeros(C, device=values.device).scatter_add_(0, lbl, torch.ones_like(values))
-        new_c = torch.where(n > 0, s / n, centroids)
-        if torch.allclose(centroids, new_c):
-            break
-        centroids = new_c
+        boundaries = (centroids[:-1] + centroids[1:]) / 2.0
+        # `right=True`: a value exactly on a midpoint joins the lower cluster, which
+        # is what `argmin` did (it returns the first of two equal distances) and what
+        # the `torch.bucketize` the caller runs afterwards does.
+        edges = torch.searchsorted(ordered, boundaries, right=True)
+        starts = torch.cat([head, edges])
+        ends = torch.cat([edges, tail])
+        counts = ends - starts
+        sums = prefix[ends] - prefix[starts]
+        means = (sums / counts.clamp_min(1)).to(centroids.dtype)
+        centroids = torch.where(counts > 0, means, centroids)
     return centroids
 
 
@@ -54,45 +97,143 @@ def _voronoi_region_ids(
     """
     N = lbl_l.shape[0]
     rid = torch.zeros(N, dtype=torch.long, device=device)
+
+    # Everything the loop needs off the GPU, in two reads instead of three per cluster:
+    # each `.item()` inside the loop drained the queue, and with up to six clusters per
+    # sample that dominated the whole transform's cost on a 128^3 patch.
+    #
+    # Drawing up front consumes a fixed two uniforms per cluster where the scalar version
+    # drew the second only when the first said "subdivide", so a seeded run no longer
+    # reproduces the previous release's region maps. Same independent uniforms either way.
+    counts = torch.bincount(lbl_l[fg > 0], minlength=C)[:C].tolist()
+    decisions = torch.rand(C, 2, device=device).tolist()
+
     offset = 0
     for c in range(C):
-        c_mask = lbl_l == c
-        c_fg_mask = c_mask & (fg > 0)
-        n_fg = int(c_fg_mask.sum().item())
+        n_fg = int(counts[c])
         if n_fg == 0:
             continue
-        if n_fg < 2 or torch.rand(1, device=device).item() < skip_sub_parc_prob:
+        c_mask = lbl_l == c
+        if n_fg < 2 or decisions[c][0] < skip_sub_parc_prob:
             S = 1
         else:
-            s_idx = int(torch.rand(1, device=device).item() * len(s_choices))
+            s_idx = int(decisions[c][1] * len(s_choices))
             S = min(s_choices[s_idx], n_fg)
         if S <= 1:
-            rid = torch.where(c_mask, torch.full_like(rid, offset), rid)
+            rid.masked_fill_(c_mask, offset)
             offset += 1
             continue
-        seed_idx = torch.multinomial(c_fg_mask.float(), S, replacement=False)
-        centroids_v = coords.index_select(0, seed_idx)
-        d = torch.cdist(coords, centroids_v)
-        sub = torch.argmin(d, dim=1)
-        rid = torch.where(c_mask, offset + sub, rid)
+        # Only this cluster's voxels take part: the result is written under `c_mask`
+        # anyway, so the full-volume `cdist` computed C times as many distances as
+        # the output has rows.
+        member = c_mask.nonzero(as_tuple=True)[0]
+        fg_member = member[fg[member] > 0]
+        # The S largest of n iid uniforms is a uniformly random S-subset, and `topk`
+        # for S <= 10 is a reduction where `randperm` is a full sort of n: 0.11 ms
+        # against 0.49 ms at a million foreground voxels.
+        seed_idx = fg_member[torch.topk(torch.rand(fg_member.numel(), device=device), S).indices]
+        d = torch.cdist(coords.index_select(0, member), coords.index_select(0, seed_idx))
+        rid[member] = offset + torch.argmin(d, dim=1)
         offset += S
     # At least one region, always. Every cluster can be skipped above -- a constant image
-    # has no foreground at all, so `n_fg` is zero for all of them -- and `offset` then
-    # stays at 0 while `rid` is a valid all-zero id map. The caller sizes its scatter
-    # target with this count, so returning 0 means scattering index 0 into a zero-length
-    # tensor: a RuntimeError on CPU and a device-side assert on CUDA, which does not just
-    # fail the batch, it poisons the context and ends the run.
+    # has no foreground -- leaving `offset` at 0 while `rid` is a valid all-zero id map.
+    # The caller sizes its scatter target with this count, so returning 0 scatters index 0
+    # into a zero-length tensor: a RuntimeError on CPU and a device-side assert on CUDA,
+    # which poisons the context and ends the run rather than merely failing the batch.
     return rid, max(offset, 1)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def segment_sum(ids: torch.Tensor, values: torch.Tensor, n_segments: int) -> torch.Tensor:
+    """Sum `values` into `n_segments` bins indexed by `ids`. Returns `(n_segments,)`.
+
+    `torch.zeros(R).scatter_add_(0, ids, values)` is the obvious spelling and the
+    slow one: with a couple of dozen bins and two million values, every thread in
+    the grid contends for one of a handful of global addresses. `bincount` keeps its
+    accumulator in shared memory per block, and measured 0.16 ms against 0.52 ms for
+    a 128^3 volume over 24 regions.
+
+    `bincount` sizes its output from the largest id present, so a trailing segment
+    that no voxel landed in would come back missing; the pad restores it as a zero.
+    """
+    summed = torch.bincount(ids, weights=values, minlength=n_segments).to(values.dtype)
+    if summed.numel() < n_segments:
+        summed = F.pad(summed, (0, n_segments - summed.numel()))
+    return summed[:n_segments]
+
+
+def foreground_classes(labels: torch.Tensor) -> torch.Tensor:
+    """The distinct positive values in an integer label volume, ascending.
+
+    `labels.unique()` radix-sorts the whole volume to answer a question about a
+    handful of small integers; counting them and keeping the non-empty bins is half
+    the time on a 2 x 128^3 batch, and the result is identical.
+    """
+    flat = labels.reshape(-1)
+    counts = torch.bincount(flat.clamp_min(0))
+    present = counts.nonzero().flatten()
+    return present[present > 0]
+
+
+@functools.lru_cache(maxsize=8)
+def voxel_coordinates(shape: tuple[int, int, int], device: torch.device) -> torch.Tensor:
+    """`[D*H*W, 3]` ijk voxel coordinates for a patch shape, built once and shared.
+
+    This is a function of the patch shape alone -- fixed for a training run -- but
+    was rebuilt on every call, and at 128^3 the `meshgrid`/`stack` writes 24 MB each
+    time. The returned tensor is shared; treat it as read-only.
+    """
+    depth, height, width = shape
+    return torch.stack(
+        torch.meshgrid(
+            torch.arange(depth, device=device, dtype=torch.float32),
+            torch.arange(height, device=device, dtype=torch.float32),
+            torch.arange(width, device=device, dtype=torch.float32),
+            indexing="ij",
+        ),
+        dim=-1,
+    ).reshape(depth * height * width, 3)
+
+
+#: sqrt(2*pi), as a Python float. It used to be built with `torch.sqrt(torch.tensor(
+#: 2*pi, device=...))` inside `_normal_pdf`, which is a host-to-device copy and a
+#: kernel launch for a compile-time constant -- once per region per sample.
+_SQRT_TWO_PI = math.sqrt(2.0 * math.pi)
+
+
 def _normal_pdf(x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor) -> torch.Tensor:
     inv = 1.0 / (std + 1e-6)
-    return (inv / (torch.sqrt(torch.tensor(2.0 * 3.141592653589793, device=x.device, dtype=x.dtype)))) * torch.exp(
-        -0.5 * ((x - mean) * inv) ** 2
-    )
+    return (inv / _SQRT_TWO_PI) * torch.exp(-0.5 * ((x - mean) * inv) ** 2)
+
+
+def _region_moments(region_mask: torch.Tensor, design: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Voxel count, mean and standard deviation per region, in one matrix multiply.
+
+    `design` is the `[S, 3]` stack of `1`, `x` and `x**2`, so the product holds the
+    three sums each region's statistics need. The variance comes from
+    `E[x^2] - E[x]^2`, which is the same quantity the explicit
+    `((x - mean) * mask) ** 2` pass computed -- the mask is binary, so squaring it
+    changes nothing -- without materialising the centred array.
+
+    The matmul is pinned to fp32, and must stay that way. `autocast` demotes matmuls
+    to fp16, which maxes at 65504, so the `1` column -- a plain voxel count -- saturates
+    to `inf` for any region above about 40^3 voxels. At the 128^3 training patch size
+    the background region always does, and then `counts=inf` gives `means=NaN`, every
+    per-region Gaussian contribution is NaN, the `tmax - tmin > 1e-8` guard in
+    `RandomRedistributeSegGPU` is False on NaN, and the transform returns its input
+    untouched -- an exact identity that no NaN check sees, because the NaN never
+    reaches the output. fp32 represents these counts exactly (128^3 is far below 2^24)
+    and TF32 keeps the matmul as fast as the fp16 one. Returned in fp32 deliberately:
+    casting back to `design.dtype` would reintroduce the overflow under autocast.
+    """
+    with torch.autocast(device_type=design.device.type, enabled=False):
+        sums = region_mask.to(torch.float32) @ design.to(torch.float32)  # (R, 3)
+    counts = sums[:, 0].clamp_min(1)
+    means = sums[:, 1] / counts
+    variances = (sums[:, 2] / counts - means * means).clamp_min(0)
+    return counts, means, variances.sqrt()
 
 
 ## Redistribute segmentation values transform (GPU)
@@ -106,13 +247,31 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
 
     Mirrors the CPU `RedistributeTransform` behavior using GPU-friendly ops.
     Works with inputs shaped [N, C, H, W] or [N, C, D, H, W].
+
+    `retain_stats` defaults to True, and wants to stay that way. The whole method
+    operates in a per-sample [0, 1] min-max space and adds a perturbation of up to
+    2.0 *in that space* -- twice the input's full dynamic range. With
+    `retain_stats=False` nothing maps the result back, so the output is
+    independent of the input's scale entirely: a z-scored patch, the same patch
+    scaled by 100, and anything else all come out in the same [0.5, 2.9] band with
+    mean 2.2. For a network fed z-scored patches that is finite, silent and badly
+    out of distribution -- the same defect the no-foreground branch below carries a
+    comment about.
+
+    Mapping back is not a fix on its own: the perturbation is defined in
+    normalised units, so rescaling it by the input range makes it far larger
+    (measured, mean 18.4 rather than 2.2). Bounding the amplitude in input units
+    would be a redesign of an augmentation inherited from totalspineseg, so this
+    only changes which setting you get by default. `transform_params_hybrid.json`
+    and `transform_params_hybrid_TAGE.json` ask for False explicitly and are
+    unaffected.
     """
 
     def __init__(
         self,
         in_seg: float = 0.2,
         apply_to_channel: Sequence[int] = (0,),
-        retain_stats: bool = False,
+        retain_stats: bool = True,
         same_on_batch: bool = False,
         p: float = 1.0,
         p_batch: float = 1.0,
@@ -130,15 +289,13 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
     @torch.no_grad()
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
         # Expect segmentation provided in params: shape [N, 1, ...] or [N, C_seg, ...]
-        # A clone, not the caller's tensor: this method writes channels back with
-        # `input[:, c] = ...`, and kornia hands the caller's own tensor straight
-        # through when every sample applies. Every transform in gpu/spatial.py and
-        # the palette/domain-transfer transforms already clone; these did not, so
-        # `batch["data"]` was destroyed under any caller holding a reference.
+        # A clone, not the caller's tensor: this writes channels back with
+        # `input[:, c] = ...` and kornia passes the caller's own tensor through when
+        # every sample applies, which destroyed `batch["data"]` for any caller holding it.
         input = input.clone()
-        if "seg" not in params:
+        seg = segmentation_from(params)
+        if seg is None:
             return input
-        seg = params["seg"]
         if seg.dim() != input.dim():
             # Allow seg [N, ...] by adding channel dim
             if seg.dim() == input.dim() - 1:
@@ -176,25 +333,34 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
             denom = (img_max - img_min).clamp_min(1e-6)
             x_batch = (img_batch - img_min) / denom
 
+            # Everything the per-sample loop reads back to Python, read once: the
+            # empty-mask test, the redistribution mode and the dilation count were three
+            # `.item()` calls inside the loop, each stalling the host until the queue
+            # drains. Drawing the two random ones for the batch up front keeps each
+            # sample's draw independent but not in the loop's interleaved order, so a
+            # seeded run differs from the previous release's.
+            has_foreground = (seg.reshape(N, -1) > 0).any(dim=1).tolist()
+            in_seg_draws = (torch.rand(N, device=input.device) <= self.in_seg).tolist()
+            dilation_draws = torch.randint(
+                self.dilation_iterations_range[0], self.dilation_iterations_range[1] + 1, (N,), device=input.device
+            ).tolist()
+
             # Iterate per sample (seg can differ in shape or labels per sample)
             for b in range(N):
                 x = x_batch[b]
-                # No regions to redistribute between, so leave the sample exactly as it
-                # came in. `x_batch` is the [0,1] min-max normalisation this transform
-                # works in, and writing *that* back -- which is what this did -- turns a
-                # z-scored air patch at about [-2.7, -2.67] into [0, 1] and then skips
-                # the `retain_stats` restore below that would have undone it. It is not a
-                # rare shape: nnU-Net leaves some samples of every batch unconstrained,
-                # and a few cases are effectively unlabelled, so this fires on real
-                # anatomy and produces a perfectly finite, badly out-of-distribution
-                # patch that no NaN guard can see.
-                if (seg[b] > 0).sum() == 0:
+                # No regions to redistribute between, so leave the sample as it came in.
+                # `x_batch` is the [0,1] min-max normalisation this transform works in,
+                # and writing that back turns a z-scored air patch at about [-2.7, -2.67]
+                # into [0, 1], then skips the `retain_stats` restore that would have undone
+                # it. nnU-Net leaves some samples of every batch unconstrained and a few
+                # cases are effectively unlabelled, so this fires on real anatomy and
+                # produces a finite, badly out-of-distribution patch no NaN guard can see.
+                if not has_foreground[b]:
                     input[b, c] = img_batch[b]
                     continue
 
                 # Decide redistribution mode once per sample
-                # Scalar random flag for redistribution mode
-                in_seg_bool = torch.rand((), device=input.device) <= self.in_seg
+                in_seg_bool = in_seg_draws[b]
 
                 # Binary masks for regions
                 masks = regions[b]  # (R, ...)
@@ -202,12 +368,7 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
 
                 # Vectorized dilation for all regions (3 iterations)
                 dilated = masks.float()
-                dilation_iterations = int(
-                    torch.randint(self.dilation_iterations_range[0], self.dilation_iterations_range[1] + 1, (1,), device=input.device)[
-                        0
-                    ].item()
-                )
-                for _ in range(dilation_iterations):
+                for _ in range(int(dilation_draws[b])):
                     if spatial_dims == 3:
                         dilated = F.max_pool3d(dilated.unsqueeze(0), 3, 1, 1).squeeze(0)
                     else:
@@ -219,21 +380,12 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
                 mask_flat = masks.view(R, -1)
                 dil_flat = dilated_excl.view(R, -1)
 
-                # Region counts
-                counts = mask_flat.sum(dim=1).clamp_min(1)
-                # Means
-                means = (mask_flat * x_flat).sum(dim=1) / counts
-                # Std (compute variance then sqrt) avoid indexing overhead
-                diffs = (x_flat - means.view(R, 1)) * mask_flat
-                vars = (diffs * diffs).sum(dim=1) / counts.clamp_min(1)
-                stds = vars.sqrt()
-
-                # Dilated stats
-                dil_counts = dil_flat.sum(dim=1).clamp_min(1)
-                dil_means = (dil_flat * x_flat).sum(dim=1) / dil_counts
-                dil_diffs = (x_flat - dil_means.view(R, 1)) * dil_flat
-                dil_vars = (dil_diffs * dil_diffs).sum(dim=1) / dil_counts
-                dil_stds = dil_vars.sqrt()
+                # Count, mean and variance per region as one [R, S] x [S, 3] matmul each.
+                # Spelled out that was six passes over an [R, S] array and two 32 MB
+                # temporaries (four regions of a 128^3 patch) for six numbers per region.
+                design = torch.stack([torch.ones_like(x_flat[0]), x_flat[0], x_flat[0] * x_flat[0]], dim=1)  # (S, 3)
+                counts, means, stds = _region_moments(mask_flat, design)
+                dil_counts, dil_means, dil_stds = _region_moments(dil_flat, design)
 
                 # redist_std per region
                 std_noise_range = (
@@ -244,31 +396,27 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
                     torch.full((R,), 0.01, device=input.device, dtype=input.dtype),
                 )
 
-                # Build additive term
+                # Accumulated in place rather than stacked: the global branch built a list
+                # of R full-volume tensors and stacked them before summing, an extra
+                # R-volume allocation and pass. The in-region branch indexed each region
+                # out with a boolean mask, and a boolean index is a `nonzero` -- a host
+                # synchronisation per region. Multiplying by the mask writes the same values
+                # at the same voxels, because the regions are summed either way.
+                #
+                # The `counts[r] == 0` guards both branches carried could not fire:
+                # `counts` is `clamp_min(1)`.
                 to_add = torch.zeros_like(x)
                 rand_sign = 2 * torch.rand(R, device=input.device) - 1  # random sign factor per region
-                if in_seg_bool.item():
-                    # Only inside region
-                    for r in range(R):
-                        if counts[r] == 0:  # skip empty
-                            continue
-                        region_vals = x[mask_flat[r].view(x.shape)]
-                        pdf_vals = _normal_pdf(region_vals, means[r], redist_std[r]) * rand_sign[r]
-                        to_add[mask_flat[r].view(x.shape)] += pdf_vals
-                else:
-                    # Global additive influence per region
-                    pdf_all = []
-                    for r in range(R):
-                        if counts[r] == 0:
-                            continue
-                        pdf_all.append(_normal_pdf(x, means[r], redist_std[r]) * rand_sign[r])
-                    if pdf_all:
-                        to_add += torch.stack(pdf_all, dim=0).sum(dim=0)
+                for r in range(R):
+                    contribution = _normal_pdf(x, means[r], redist_std[r]) * rand_sign[r]
+                    if in_seg_bool:
+                        contribution = contribution * mask_flat[r].view(x.shape)
+                    to_add += contribution
 
-                # Normalize to_add if non-zero
+                # Normalize to_add if non-zero. `torch.where`, not `if`: the test is one
+                # more host read, and both sides are cheap.
                 tmin, tmax = to_add.min(), to_add.max()
-                if (tmax - tmin) > 1e-8:
-                    x = x + 2 * (to_add - tmin) / (tmax - tmin + 1e-6)
+                x = torch.where(tmax - tmin > 1e-8, x + 2 * (to_add - tmin) / (tmax - tmin + 1e-6), x)
 
                 # Restore stats
                 if self.retain_stats:
@@ -279,7 +427,7 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
                     x = x * orig_std[b] + orig_mean[b]
 
                 # Final safety: check if nan/inf appeared
-                if torch.isnan(x).any() or torch.isinf(x).any():
+                if not bool(torch.isfinite(x).all()):
                     print(f"Warning nan: {self.__class__.__name__}", flush=True)
                     continue
                 input[b, c] = x
@@ -342,10 +490,9 @@ class RandomPaletteGPU(ImageOnlyTransform):
         p: float = 1.0,
         p_batch: float = 1.0,
         same_on_batch: bool = False,
-        # Note the default is False, not the True its siblings use. This class
-        # previously forwarded **kwargs straight to super(), so keepdim fell through
-        # to kornia's own default -- and nothing ever passed it. Spelling that out
-        # rather than "fixing" it keeps the transform behaving exactly as before.
+        # The default is False, not the True its siblings use: this class forwarded
+        # **kwargs straight to super(), so keepdim fell through to kornia's own default and
+        # nothing ever passed it. Spelled out rather than "fixed", to keep behaviour.
         keepdim: bool = False,
     ) -> None:
         super().__init__(p=p, p_batch=p_batch, same_on_batch=same_on_batch, keepdim=keepdim)
@@ -369,13 +516,9 @@ class RandomPaletteGPU(ImageOnlyTransform):
         flags: dict[str, Any],
         transform: Tensor | None = None,
     ) -> Tensor:
-        # A clone, not the caller's tensor: this method writes channels back with
-        # `input[:, c] = ...`, and kornia hands the caller's own tensor straight
-        # through when every sample applies. Every transform in gpu/spatial.py and
-        # the palette/domain-transfer transforms already clone; these did not, so
-        # `batch["data"]` was destroyed under any caller holding a reference.
+        # Clone: kornia passes the caller's tensor through; this writes channels back.
         input = input.clone()
-        seg_raw: torch.Tensor | None = params.get("seg")
+        seg_raw: torch.Tensor | None = segmentation_from(params)
 
         labels: torch.Tensor | None = None
         if seg_raw is not None and seg_raw.ndim == 5 and seg_raw.shape[1] > 1:
@@ -397,16 +540,9 @@ class RandomPaletteGPU(ImageOnlyTransform):
 
         flat_m_all = (images_01 > self.dark_threshold).float()  # foreground mask
 
-        # Voxel coordinates (shared — same spatial dims for every sample)
-        coords = torch.stack(
-            torch.meshgrid(
-                torch.arange(D, device=device, dtype=torch.float32),
-                torch.arange(H, device=device, dtype=torch.float32),
-                torch.arange(W, device=device, dtype=torch.float32),
-                indexing="ij",
-            ),
-            dim=-1,
-        ).reshape(N, 3)
+        # Voxel coordinates (shared — same spatial dims for every sample, and the
+        # same from one call to the next, so they are built once per patch shape).
+        coords = voxel_coordinates((D, H, W), device)
 
         # ── Step 1: PALETTE K-means + Voronoi per-region affine remap ──────────
         synth_list = []
@@ -447,8 +583,8 @@ class RandomPaletteGPU(ImageOnlyTransform):
                     self.skip_sub_parc_prob,
                 )
 
-                s_c = torch.zeros(R, device=device).scatter_add_(0, rid, flat * flat_m)
-                n_c = torch.zeros(R, device=device).scatter_add_(0, rid, flat_m)
+                s_c = segment_sum(rid, flat * flat_m, R)
+                n_c = segment_sum(rid, flat_m, R)
                 mean_c = s_c / n_c.clamp(min=eps)
 
                 mu_c = torch.rand(R, device=device)
@@ -477,8 +613,7 @@ class RandomPaletteGPU(ImageOnlyTransform):
                 labels = F.interpolate(labels.float(), size=(D, H, W), mode="nearest-exact").long()
             lbl = labels[:, 0].reshape(B, N).clamp(min=0)
 
-            unique_classes = lbl.unique()
-            unique_classes = unique_classes[unique_classes > 0]
+            unique_classes = foreground_classes(lbl)
             if self.label_classes is not None:
                 keep = torch.tensor(self.label_classes, device=device)
                 unique_classes = unique_classes[torch.isin(unique_classes, keep)]
@@ -618,8 +753,9 @@ class DifferentiableHistogram3D(nn.Module):
         self.max_value = float(value_range[1])
         self.eps = eps
 
-        bin_centers = torch.linspace(self.min_value, self.max_value, num_bins)
-        self.register_buffer("bin_centers", bin_centers.view(1, 1, num_bins, 1), persistent=False)
+        # No bin_centers buffer: `forward` derives every index from min_value and
+        # bin_width arithmetically and never read it, so it was dead state that still
+        # showed up in state_dict() and moved with .to(device) on every call.
         self.bin_width = (self.max_value - self.min_value) / max(num_bins - 1, 1)
 
     def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:

@@ -20,7 +20,6 @@ REPO = Path(__file__).resolve().parent.parent
 # A *tracked* config. Most of smauglab/configs is gitignored (per-experiment
 # sweeps), so naming one of those makes the test pass locally and fail in CI.
 DEFAULT_GPU = REPO / "smauglab" / "configs" / "transform_params_gpu.json"
-LEGACY = REPO / "unit_tests" / "fixtures" / "legacy_configs" / "configs" / "transform_params_gpu.json"
 
 
 def run(*argv: str) -> tuple[int, str]:
@@ -51,17 +50,17 @@ class TestList(unittest.TestCase):
 
 
 class TestMatrix(unittest.TestCase):
-    def test_markdown_shows_the_monai_column_as_empty(self):
+    def test_markdown_header_lists_the_backends(self):
         code, out = run("matrix", "--format", "md")
         self.assertEqual(code, 0)
-        self.assertIn("| Augmentation | Group | GPU | CPU | MONAI |", out)
+        self.assertEqual(out.splitlines()[0], "| Augmentation | Group | GPU | CPU |")
 
     def test_json_form_reports_missing_backends_as_null(self):
         _, out = run("matrix", "--format", "json")
         payload = json.loads(out)
         self.assertIsNone(payload["palette"]["CPU"])
         self.assertEqual(payload["palette"]["GPU"], "RandomPaletteGPU")
-        self.assertTrue(all(row["MONAI"] is None for row in payload.values()))
+        self.assertTrue(all(set(row) == {"GPU", "CPU"} for row in payload.values()), "a backend column appeared or vanished")
 
     def test_check_passes_on_a_clean_tree(self):
         code, _ = run("matrix", "--check")
@@ -106,10 +105,17 @@ class TestValidate(unittest.TestCase):
         self.assertIn("RandomScharrGPU", out)
         self.assertIn("'probability' -> p", out)
 
-    def test_a_legacy_config_is_rejected_and_points_at_migrate(self):
-        code, out = run("validate", str(LEGACY))
+    def test_a_flat_config_is_rejected_and_says_what_to_do(self):
+        """Pre-registry configs were flat; the two namespaces overlapped, so a key
+        alone cannot say which builder it was meant for."""
+        payload = {"ScharrTransform": {"p": 0.1}, "GaussianBlurTransform": {"p": 0.2}}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "flat.json"
+            path.write_text(json.dumps(payload))
+            code, out = run("validate", str(path))
         self.assertEqual(code, 1)
-        self.assertIn("migration/", out)
+        self.assertIn("no GPU or CPU section", out)
+        self.assertIn("'GPU' or 'CPU' section", out)
 
 
 class TestTemplateAndHash(unittest.TestCase):

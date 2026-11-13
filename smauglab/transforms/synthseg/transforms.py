@@ -2,21 +2,19 @@
 
 Two entry points are provided:
 
-* :class:`RandomSynthSegGPU` -- an :class:`ImageOnlyTransform` that *replaces*
-  the image with a GMM-synthesised one derived from ``params['seg']``. It is
-  intensity-only (no internal spatial deformation), so it composes with SmaugLab's
-  existing geometric transforms (``RandomAffineGPU``, ``RandomFlipTransformGPU``,
-  ...) inside an :class:`AugmentationSequentialCustom`: place those *before* it so
-  the mask is deformed first and SynthSeg generates from the deformed labels,
-  keeping image and label aligned. Drop it into a ``transform_params_gpu.json``
-  pipeline like any other transform.
+* :class:`RandomSynthSegGPU` -- an :class:`ImageOnlyTransform` that *replaces* the image
+  with a GMM-synthesised one derived from ``params['seg']``. It is intensity-only (no
+  internal spatial deformation), so it composes with SmaugLab's geometric transforms
+  (``RandomAffineGPU``, ``RandomFlipTransformGPU``, ...) inside an
+  :class:`AugmentationSequentialCustom`: place those *before* it, so the mask is deformed
+  first and SynthSeg generates from the deformed labels, keeping image and label aligned.
+  Drop it into a ``transform_params_gpu.json`` pipeline like any other transform.
 
 * :class:`SynthSegTransformsGPU` -- a config-driven top-level module mirroring
-  :class:`smauglab.transforms.gpu.transforms.AugTransformsGPU`. It runs the *full*
-  SynthSeg pipeline (spatial deform + flip + GMM + bias + intensity + resolution)
-  and returns ``(image, label)`` from ``forward(data, target)`` -- the calling
-  convention used by the nnUNet trainer and ``train_monai.py``. This is the
-  faithful end-to-end SynthSeg generator.
+  :class:`smauglab.transforms.gpu.transforms.AugTransformsGPU`. It runs the *full* SynthSeg
+  pipeline (spatial deform + flip + GMM + bias + intensity + resolution) and returns
+  ``(image, label)`` from ``forward(data, target)``, the calling convention the nnUNet
+  trainer and ``train_monai.py`` use. This is the faithful end-to-end SynthSeg generator.
 """
 
 from __future__ import annotations
@@ -29,7 +27,7 @@ import torch
 from torch import Tensor, nn
 
 from smauglab.registry import AugId, AugType, Backend, register
-from smauglab.transforms.gpu.base import ImageOnlyTransform
+from smauglab.transforms.gpu.base import ImageOnlyTransform, segmentation_from
 from smauglab.transforms.synthseg.generator import SynthSegGenerator
 
 # Keys understood from the JSON config / kwargs, forwarded to SynthSegGenerator.
@@ -71,6 +69,7 @@ _GENERATOR_KEYS = {
     "em_n_iters",
     "em_max_fit_voxels",
     "em_same_on_batch",
+    "em_merge_prob",
     "apply_affine",
     "apply_nonlinear",
     "apply_bias_field",
@@ -128,7 +127,7 @@ class RandomSynthSegGPU(ImageOnlyTransform):
 
     @torch.no_grad()
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
-        seg = params.get("seg")
+        seg = segmentation_from(params)
         if seg is None:
             return input
 
@@ -182,18 +181,32 @@ class SynthSegTransformsGPU(nn.Module):
 
     @torch.no_grad()
     def forward(self, data: Tensor, target: Tensor):
-        if self.probability < 1.0 and float(torch.rand((), device=data.device)) >= self.probability:
+        # Per sample, not per batch. One draw for the whole batch made `probability` mean
+        # "this fraction of batches is entirely synthetic", so at 0.5 the network saw
+        # all-synthetic and all-real batches rather than a mix in each -- a different
+        # training signal, and out of step with the per-sample convention here.
+        keep = torch.rand(data.shape[0], device=data.device) < self.probability
+        if not bool(keep.any()):
             return data, target
 
         # ``data`` (the real image) is only consumed when em_label_completion is on.
-        image, labels = self.generator(target, image=data)
+        image, labels = self.generator(target[keep], image=data[keep])
         image = image.to(device=data.device, dtype=data.dtype)
 
         if self.return_onehot and target.dim() == 5 and target.shape[1] > 1:
             labels = self._to_onehot(labels, target.shape[1]).to(dtype=target.dtype)
         else:
             labels = labels.to(dtype=target.dtype)
-        return image, labels
+
+        if bool(keep.all()):
+            return image, labels
+
+        # Splice the synthesised rows back in, leaving the rest untouched.
+        out_image = data.clone()
+        out_target = target.clone()
+        out_image[keep] = image
+        out_target[keep] = labels
+        return out_image, out_target
 
     @staticmethod
     def _to_onehot(labels: Tensor, n_channels: int) -> Tensor:
@@ -205,8 +218,14 @@ class SynthSegTransformsGPU(nn.Module):
         return onehot
 
 
-if __name__ == "__main__":
-    # Smoke test mirroring the generator's, exercising both wrappers.
+def smoke_test() -> None:
+    """Check on a synthetic label map, mirroring the generator's and exercising both wrappers.
+
+    Run through the package: `python -m smauglab.transforms.synthseg`. It cannot be an
+    `if __name__ == "__main__"` block -- `python -m smauglab.transforms.synthseg.transforms`
+    executes this file a second time under the name `__main__`, so `@register` fires
+    twice and the duplicate-name guard rejects the second. See `__main__.py`.
+    """
     torch.manual_seed(0)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -230,4 +249,3 @@ if __name__ == "__main__":
     out = t.apply_transform(img.clone().to(device), {"seg": labels.to(device)}, {})
     print("imageonly", tuple(out.shape), "range", (round(float(out.min()), 3), round(float(out.max()), 3)))
     assert out.shape == img.shape and not torch.isnan(out).any()
-    print("OK")

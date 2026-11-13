@@ -1,10 +1,10 @@
 """SynthSeg generative model (``BrainGenerator``) as a torch module.
 
-``SynthSegGenerator`` faithfully reproduces the order of operations and the
-default hyper-parameters of the SynthSeg "brain generator"
-(``SynthSeg/brain_generator.py`` -> ``labels_to_image_model``), turning an
-anatomical *label map* into a randomly-synthesised image together with the
-matching (spatially-deformed, possibly relabelled) ground-truth label map:
+``SynthSegGenerator`` reproduces the order of operations and the default hyper-parameters
+of the SynthSeg "brain generator" (``SynthSeg/brain_generator.py`` ->
+``labels_to_image_model``), turning an anatomical *label map* into a randomly synthesised
+image together with the matching (spatially deformed, possibly relabelled) ground-truth
+label map:
 
     spatial deform (affine + diffeomorphic SVF, on labels, nearest)
       -> [optional random crop]
@@ -15,15 +15,13 @@ matching (spatially-deformed, possibly relabelled) ground-truth label map:
       -> resolution randomisation (blur -> subsample -> resample), per channel
       -> map generation labels to output/segmentation labels
 
-The default hyper-parameters match ``BrainGenerator`` (which overrides several
-``labels_to_image_model`` signature defaults). See ``README.md`` for the table
-and source citations.
+The defaults match ``BrainGenerator``, which overrides several ``labels_to_image_model``
+signature defaults; ``README.md`` has the table and the source citations.
 
-Note on label maps: SynthSeg derives its realism from a *dense* anatomical label
-map (e.g. a FreeSurfer/SAMSEG segmentation covering every tissue). When fed a
-sparse target segmentation (only a few foreground structures over a 0
-background) it still runs correctly, but the synthetic image will only contain
-those structures over a single-Gaussian background.
+Note on label maps: SynthSeg's realism comes from a *dense* anatomical label map (e.g. a
+FreeSurfer/SAMSEG segmentation covering every tissue). Fed a sparse target segmentation it
+still runs correctly, but the synthetic image contains only those structures over a
+single-Gaussian background.
 """
 
 from __future__ import annotations
@@ -88,7 +86,14 @@ class SynthSegGenerator(nn.Module):
         em_n_iters: EM iterations.
         em_max_fit_voxels: subsample size for fitting each EM (the full region is
             still assigned); ``0`` -> use all voxels.
-        em_same_on_batch: share the random background cluster count across the batch.
+        em_same_on_batch: share the random background cluster count and the
+            ``em_merge_prob`` merge pattern across the batch.
+        em_merge_prob: per-subregion probability that an EM subregion shares its
+            parent's Gaussian with a sibling instead of getting its own, drawn
+            afresh for every sample (see :func:`functional.random_merge_classes`).
+            ``0`` -> every subregion independent, which is what the paper does;
+            ``1`` -> one Gaussian per parent label. Only read when
+            ``em_label_completion=True``.
         apply_intensity_augmentation: toggle clip/normalise/gamma.
     """
 
@@ -131,6 +136,7 @@ class SynthSegGenerator(nn.Module):
         em_n_iters: int = 20,
         em_max_fit_voxels: int = 100000,
         em_same_on_batch: bool = False,
+        em_merge_prob: float = 0.5,
         apply_affine: bool = True,
         apply_nonlinear: bool = True,
         apply_bias_field: bool = True,
@@ -181,6 +187,7 @@ class SynthSegGenerator(nn.Module):
         self.em_n_iters = int(em_n_iters)
         self.em_max_fit_voxels = int(em_max_fit_voxels)
         self.em_same_on_batch = em_same_on_batch
+        self.em_merge_prob = float(em_merge_prob)
         self._warned_em = False
 
         self.apply_affine = apply_affine
@@ -212,7 +219,8 @@ class SynthSegGenerator(nn.Module):
         # Label bookkeeping (defaults from config; overridden by EM completion).
         gen_labels = self.generation_labels  # list[int] or None
         out_labels_cfg = self.output_labels  # list[int] or None
-        gen_classes = self.generation_classes  # list[int] or None
+        # list[int], or a (batch, n_labels) tensor once an EM merge has been drawn.
+        gen_classes: Sequence[int] | torch.Tensor | None = self.generation_classes
         n_neutral = self.n_neutral_labels
         randomise_bg = True
 
@@ -238,7 +246,15 @@ class SynthSegGenerator(nn.Module):
                     max_fit_voxels=self.em_max_fit_voxels,
                     same_on_batch=self.em_same_on_batch,
                 )
-                gen_classes = None  # each sub-label gets its own Gaussian
+                # Each sub-label gets its own Gaussian, except where the merge
+                # draw ties it to a sibling. Skipped entirely at 0 so the faithful
+                # path draws exactly the random numbers it did before.
+                merge_batch = 1 if self.em_same_on_batch else batch
+                gen_classes = (
+                    FN.random_merge_classes(out_labels_cfg, self.em_merge_prob, merge_batch, device).expand(batch, -1)
+                    if self.em_merge_prob > 0
+                    else None
+                )
                 n_neutral = None  # plain flip (sub-labels carry no L/R structure)
                 randomise_bg = False  # background is now modelled by its clusters
 
@@ -395,8 +411,15 @@ class SynthSegGenerator(nn.Module):
         return arr
 
 
-if __name__ == "__main__":
-    # Minimal self-contained smoke test on a synthetic label map (CPU-friendly).
+def smoke_test() -> None:
+    """Minimal self-contained check on a synthetic label map (CPU-friendly).
+
+    Run through the package: `python -m smauglab.transforms.synthseg`. Not an
+    `if __name__ == "__main__"` block, because `python -m` on a module that this
+    package's `__init__` already imports executes the file a second time under the
+    name `__main__` -- which Python warns about and which breaks outright for the
+    registering module next door. See `__main__.py`.
+    """
     torch.manual_seed(0)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -419,4 +442,3 @@ if __name__ == "__main__":
     assert image.shape[0] == B and image.shape[1] == 1
     assert out_labels.shape[2:] == image.shape[2:]
     assert not torch.isnan(image).any(), "NaNs in generated image"
-    print("OK")

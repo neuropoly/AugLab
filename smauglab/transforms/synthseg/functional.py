@@ -1,31 +1,30 @@
 """Functional building blocks for the SynthSeg generative model (GPU / torch).
 
-This module re-implements, as standalone differentiable-free torch ops, the
-individual layers of the SynthSeg "brain generator" described in:
+Standalone torch re-implementations of the individual layers of the SynthSeg "brain
+generator" described in:
 
     B. Billot et al., "SynthSeg: Segmentation of brain MRI scans of any contrast
     and resolution without retraining", Medical Image Analysis, 2023.
     (and the earlier MICCAI-2020 contrast-agnostic / PV-segmentation papers)
 
 The reference TensorFlow implementation lives in ``BBillot/SynthSeg`` and
-``BBillot/lab2im``. Each function below cites the corresponding reference layer.
-Everything operates on 3D volumes stored as ``(B, C, D, H, W)`` torch tensors
-(label maps as ``(B, 1, D, H, W)`` integer tensors), which is the convention
-used throughout SmaugLab's GPU transforms.
+``BBillot/lab2im``, and each function below cites the corresponding reference layer.
+Everything operates on 3D volumes stored as ``(B, C, D, H, W)`` torch tensors (label maps
+as ``(B, 1, D, H, W)`` integer tensors), SmaugLab's GPU-transform convention.
 
 Spatial conventions
 --------------------
-* Spatial axes ``(D, H, W)`` map to torch dims ``(2, 3, 4)``. Internally we work
-  with voxel coordinates in ``(i, j, k) = (D, H, W)`` order and only convert to
-  the ``(x, y, z) = (W, H, D)`` order expected by ``F.grid_sample`` at the very
-  end, with ``align_corners=True`` so that integer voxel indices map exactly.
-* Affine transforms are applied about the volume centre (standard practice and
-  matching SmaugLab's existing ``RandomAffineGPU``), so small rotations /
-  scalings keep the anatomy in frame.
+* Spatial axes ``(D, H, W)`` map to torch dims ``(2, 3, 4)``. Voxel coordinates are
+  ``(i, j, k) = (D, H, W)`` internally, converted to the ``(x, y, z) = (W, H, D)`` order
+  ``F.grid_sample`` expects only at the very end, with ``align_corners=True`` so that
+  integer voxel indices map exactly.
+* Affine transforms are applied about the volume centre, matching SmaugLab's existing
+  ``RandomAffineGPU``, so small rotations / scalings keep the anatomy in frame.
 """
 
 from __future__ import annotations
 
+import functools
 import math
 from collections.abc import Sequence
 from typing import Union
@@ -41,6 +40,7 @@ __all__ = [
     "bias_field",
     "blurring_sigma_for_downsampling",
     "convert_labels",
+    "distinct_values",
     "em_subdivide_labels",
     "flip_lr_with_swap",
     "gaussian_blur_3d",
@@ -48,6 +48,7 @@ __all__ = [
     "intensity_augmentation",
     "labels_to_image_gmm",
     "mimic_acquisition",
+    "random_merge_classes",
     "random_svf_field",
     "sample_affine_matrices",
     "sample_gmm_parameters",
@@ -57,9 +58,7 @@ __all__ = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# Label map helpers
-# ---------------------------------------------------------------------------
+# --- Label map helpers ----------------------------------------------------------------------------
 def to_label_map(seg: torch.Tensor) -> torch.Tensor:
     """Coerce a segmentation tensor into a single-channel integer label map.
 
@@ -92,10 +91,7 @@ def infer_label_values(label_map: torch.Tensor) -> torch.Tensor:
     return torch.unique(label_map).long()
 
 
-# ---------------------------------------------------------------------------
-# GMM intensity model  (lab2im.layers.SampleConditionalGMM
-#                       + SynthSeg.model_inputs.build_model_inputs)
-# ---------------------------------------------------------------------------
+# --- GMM intensity model (lab2im.layers.SampleConditionalGMM + SynthSeg.model_inputs.build_model_inputs)
 def _draw_value(
     prior: Union[Number, Sequence[Number], torch.Tensor] | None,
     size: tuple[int, int],
@@ -169,7 +165,7 @@ def sample_gmm_parameters(
     prior_means=None,
     prior_stds=None,
     prior_distributions: str = "uniform",
-    generation_classes: Sequence[int] | None = None,
+    generation_classes: Sequence[int] | torch.Tensor | None = None,
     background_label_index: int | None = 0,
     randomise_background: bool = True,
 ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -182,7 +178,9 @@ def sample_gmm_parameters(
     ``[25, 225]`` / ``[5, 25]`` come from a stale docstring).
 
     ``generation_classes`` lets several labels share the same Gaussian (e.g. to
-    tie left/right homologues). When ``None`` every label is independent.
+    tie left/right homologues). When ``None`` every label is independent. A
+    ``(batch, n_labels)`` array ties different labels together in each sample,
+    which is what :func:`random_merge_classes` draws.
 
     Returns ``means, stds`` of shape ``(batch, n_labels, n_channels)``.
     """
@@ -190,8 +188,10 @@ def sample_gmm_parameters(
         classes = torch.arange(n_labels, device=device)
     else:
         classes = torch.as_tensor(generation_classes, device=device, dtype=torch.long)
-        if classes.numel() != n_labels:
+        if classes.dim() not in (1, 2) or classes.shape[-1] != n_labels:
             raise ValueError("generation_classes must have one entry per generation label.")
+        if classes.dim() == 2 and classes.shape[0] != batch:
+            raise ValueError("per-sample generation_classes must have one row per batch element.")
     n_classes = int(classes.max().item()) + 1
 
     means = torch.empty(batch, n_classes, n_channels, device=device)
@@ -201,21 +201,40 @@ def sample_gmm_parameters(
         stds[:, :, ch] = _draw_value(prior_stds, (batch, n_classes), prior_distributions, 15.0, 15.0, device, positive_only=True)
 
     # Scatter class parameters to per-label parameters.
-    means_lab = means[:, classes, :]
-    stds_lab = stds[:, classes, :]
+    if classes.dim() == 2:
+        # Per-sample classes: every row picks from its own draws, so gather rather
+        # than index -- `means[:, classes, :]` would broadcast one row over all.
+        index = classes.unsqueeze(-1).expand(-1, -1, n_channels)
+        means_lab = torch.gather(means, 1, index)
+        stds_lab = torch.gather(stds, 1, index)
+    else:
+        means_lab = means[:, classes, :]
+        stds_lab = stds[:, classes, :]
 
     # Background special-casing (build_model_inputs): per subject, 5% pure black,
     # 25% very dark/low-variance, 70% normal draw.
     if randomise_background and background_label_index is not None and 0 <= background_label_index < n_labels:
-        for b in range(batch):
-            r = float(torch.rand((), device=device))
-            if r > 0.95:
-                means_lab[b, background_label_index, :] = 0.0
-                stds_lab[b, background_label_index, :] = 0.0
-            elif r > 0.70:
-                means_lab[b, background_label_index, :] = torch.rand(n_channels, device=device) * 15.0
-                stds_lab[b, background_label_index, :] = torch.rand(n_channels, device=device) * 5.0
-            # else: keep the normal draw
+        # One draw per sample and two candidate parameter sets, selected with
+        # `torch.where`; the loop this replaces read `float(torch.rand(()))` back to the
+        # host once per sample. Branch probabilities and per-sample independence are
+        # unchanged, but the dark draws are now made for every sample rather than only the
+        # ones taking that branch, so the stream differs from the previous release's.
+        draw = torch.rand(batch, 1, device=device)
+        dark_means = torch.rand(batch, n_channels, device=device) * 15.0
+        dark_stds = torch.rand(batch, n_channels, device=device) * 5.0
+        black = draw > 0.95
+        dark = (draw > 0.70) & ~black
+
+        background_means = torch.where(
+            black, torch.zeros_like(dark_means), torch.where(dark, dark_means, means_lab[:, background_label_index, :])
+        )
+        background_stds = torch.where(
+            black, torch.zeros_like(dark_stds), torch.where(dark, dark_stds, stds_lab[:, background_label_index, :])
+        )
+        means_lab = means_lab.clone()
+        stds_lab = stds_lab.clone()
+        means_lab[:, background_label_index, :] = background_means
+        stds_lab[:, background_label_index, :] = background_stds
 
     return means_lab, stds_lab
 
@@ -250,20 +269,17 @@ def labels_to_image_gmm(
     lut[label_values] = torch.arange(label_values.numel(), device=device)
     idx = lut[label_map.clamp(min=0, max=max_label)].squeeze(1)  # (B, D, H, W)
 
-    image = torch.empty((B, C, *spatial), device=device, dtype=dtype)
-    for b in range(B):
-        idx_b = idx[b]
-        for ch in range(C):
-            mean_map = means[b, :, ch][idx_b]
-            std_map = stds[b, :, ch][idx_b]
-            image[b, ch] = mean_map + std_map * torch.randn(spatial, device=device, dtype=dtype)
-    return image
+    # One gather and one noise draw for the whole batch. The nested loop this replaces
+    # indexed `means[b, :, ch][idx_b]` once per (sample, channel) and drew its noise volume
+    # separately, so a four-channel batch of two paid eight small `randn` launches.
+    flat_idx = idx.reshape(B, 1, -1).expand(B, C, -1)  # (B, C, N)
+    mean_map = torch.gather(means.transpose(1, 2), 2, flat_idx)  # (B, C, N)
+    std_map = torch.gather(stds.transpose(1, 2), 2, flat_idx)
+    noise = torch.randn((B, C, *spatial), device=device, dtype=dtype)
+    return (mean_map + std_map * noise.reshape(B, C, -1)).reshape(B, C, *spatial)
 
 
-# ---------------------------------------------------------------------------
-# Spatial deformation  (lab2im.layers.RandomSpatialDeformation
-#                       + utils.sample_affine_transform + neuron VecInt)
-# ---------------------------------------------------------------------------
+# --- Spatial deformation (lab2im.layers.RandomSpatialDeformation + utils.sample_affine_transform + neuron VecInt)
 def _as_3vec(value, device: torch.device, default: float = 0.0) -> torch.Tensor:
     if value is None or value is False:
         return torch.full((3,), float(default), device=device)
@@ -343,8 +359,16 @@ def sample_affine_matrices(
     return affine
 
 
+@functools.lru_cache(maxsize=8)
 def _identity_grid(shape: tuple[int, int, int], device: torch.device) -> torch.Tensor:
-    """Voxel-coordinate identity grid in ``(i, j, k)`` order, shape ``(3, D, H, W)``."""
+    """Voxel-coordinate identity grid in ``(i, j, k)`` order, shape ``(3, D, H, W)``.
+
+    Cached: it depends only on the patch shape, and `_integrate_velocity` calls
+    `warp_volume` seven times per field, each of which rebuilt it -- 24 MB of
+    `meshgrid` and `stack` at 128^3, seven times over, for a constant. The returned
+    tensor is shared; callers must not write into it (none do -- `warp_volume`
+    expands and then reads).
+    """
     d, h, w = shape
     zs = torch.arange(d, device=device, dtype=torch.float32)
     ys = torch.arange(h, device=device, dtype=torch.float32)
@@ -461,9 +485,7 @@ def random_svf_field(
     return _integrate_velocity(velocity, int_steps=int_steps)
 
 
-# ---------------------------------------------------------------------------
-# Bias field  (lab2im.layers.BiasFieldCorruption)
-# ---------------------------------------------------------------------------
+# --- Bias field (lab2im.layers.BiasFieldCorruption) -----------------------------------------------
 def bias_field(
     image: torch.Tensor,
     bias_field_std: float = 0.7,
@@ -483,9 +505,7 @@ def bias_field(
     return image * random_bias_field3d((D, H, W), bias_field_std, bias_scale, image.device, image.dtype, batch=B, channels=C)
 
 
-# ---------------------------------------------------------------------------
-# Intensity augmentation  (lab2im.layers.IntensityAugmentation)
-# ---------------------------------------------------------------------------
+# --- Intensity augmentation (lab2im.layers.IntensityAugmentation) ---------------------------------
 def intensity_augmentation(
     image: torch.Tensor,
     clip: float = 300.0,
@@ -516,11 +536,7 @@ def intensity_augmentation(
     return image
 
 
-# ---------------------------------------------------------------------------
-# Resolution randomisation  (lab2im.edit_tensors + layers.GaussianBlur /
-#                            DynamicGaussianBlur / SampleResolution /
-#                            MimicAcquisition)
-# ---------------------------------------------------------------------------
+# --- Resolution randomisation (lab2im.edit_tensors + layers.GaussianBlur / DynamicGaussianBlur / SampleResolution / MimicAcquisition)
 def blurring_sigma_for_downsampling(
     current_res: torch.Tensor,
     downsample_res: torch.Tensor,
@@ -628,44 +644,104 @@ def mimic_acquisition(
     return x
 
 
-# ---------------------------------------------------------------------------
-# EM label completion for sparse label maps  (SynthSeg paper, Sec. 5.4)
-# ---------------------------------------------------------------------------
+# --- EM label completion for sparse label maps (SynthSeg paper, Sec. 5.4) -------------------------
+def _quadratic_log_likelihood_terms(means: torch.Tensor, var: torch.Tensor, weights: torch.Tensor, eps: float) -> torch.Tensor:
+    """The `(3, K)` coefficients of the per-component log-density as a quadratic in x.
+
+    ``log N(x | m, v) + log w`` expands to ``a x^2 + b x + c`` with
+    ``a = -1/(2v)``, ``b = m/v`` and ``c = log w - (log 2pi + log v)/2 - m^2/(2v)``.
+    Stacking those lets a whole `(n, K)` responsibility matrix come out of one
+    matrix multiply against ``[x^2, x, 1]``, instead of half a dozen elementwise
+    kernels each writing an `(n, K)` temporary.
+    """
+    inv_var = 1.0 / var
+    const = torch.log(weights.clamp_min(eps)) - 0.5 * (math.log(2.0 * math.pi) + torch.log(var)) - 0.5 * means * means * inv_var
+    return torch.stack([-0.5 * inv_var, means * inv_var, const])
+
+
+def distinct_values(volume: torch.Tensor) -> torch.Tensor:
+    """The distinct non-negative integer values in `volume`, ascending.
+
+    `torch.unique` radix-sorts the input; counting into bins and keeping the
+    non-empty ones answers the same question for small label alphabets in about
+    half the time on a 2 x 128^3 volume, and the two results are identical.
+    """
+    return torch.bincount(volume.reshape(-1).clamp_min(0)).nonzero().flatten()
+
+
+def _label_counts_per_sample(label_map: torch.Tensor) -> torch.Tensor:
+    """`(B, max_label + 1)` voxel counts per label, per sample. Negative values are not counted.
+
+    A negative value is not a label. nnU-Net writes -1 for voxels outside the annotated
+    region, and `clamp_min(0)` counted every one of them as background -- while
+    `em_subdivide_labels`, the only caller, then selects that label's voxels with
+    `label_map == p`. The count exceeded the number of voxels selected, so the
+    `randint(0, count)` subsample indexed past the end of the gathered values. On CUDA
+    that is an asynchronous `index out of bounds` device-side assert, reported at
+    whichever kernel happens to run next, and it only fires when an oversized draw is
+    actually taken -- so it presented as an occasional, unattributable crash.
+    """
+    batch = label_map.shape[0]
+    flat = label_map.reshape(batch, -1)
+    keep = flat >= 0
+    # The clamp is on the offset only, so a negative label cannot reach another sample's
+    # bins; `keep` is what removes it from the histogram.
+    n_bins = int(flat.max().clamp_min(0)) + 1
+    # One `bincount` over row-offset labels: a `scatter_add_` into a handful of bins
+    # has every thread fighting for the same addresses, where bincount accumulates
+    # in shared memory per block.
+    offset = flat.clamp_min(0) + torch.arange(batch, device=flat.device).view(-1, 1) * n_bins
+    return torch.bincount(offset[keep], minlength=batch * n_bins).view(batch, n_bins)
+
+
 def _em_gmm_1d(x_fit: torch.Tensor, n_components: int, n_iters: int, eps: float) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None:
     """Fit a 1D Gaussian mixture by Expectation-Maximization.
 
     ``x_fit`` is a 1D tensor of intensities. Returns ``(means, vars, weights)``
     each of shape ``(K,)`` (``K = min(n_components, len(x_fit))``), or ``None`` if
     ``x_fit`` is empty. Responsibilities use a numerically-stable log-sum-exp.
+
+    Each iteration is two matrix multiplies and a softmax rather than a dozen
+    elementwise passes over an ``(n, K)`` array: the E-step log-densities are a
+    quadratic in x (see :func:`_quadratic_log_likelihood_terms`) and the M-step only
+    needs the responsibility-weighted sums of ``1``, ``x`` and ``x^2``, which is the
+    same design matrix transposed. With ``n_iters=20`` and up to ten components that
+    is the difference between ~240 kernel launches per fit and ~60.
+
+    ``x`` is centred on its own mean before the moments are accumulated, so the
+    ``E[x^2] - E[x]^2`` variance cannot lose its significant digits to cancellation
+    when a component is tight and far from zero. The means are shifted back at the
+    end.
     """
     n = x_fit.numel()
     if n == 0:
         return None
     k = max(1, min(int(n_components), n))
     device = x_fit.device
-    xmin, xmax = float(x_fit.min()), float(x_fit.max())
-    means = torch.linspace(xmin, xmax, k, device=device)
-    if xmax <= xmin:  # degenerate (constant region): spread the means slightly
-        means = means + torch.arange(k, device=device, dtype=means.dtype) * eps
+
+    # `float(x.min())` twice was two host synchronisations per fit, and
+    # `em_subdivide_labels` calls this once per label per sample.
+    x_min, x_max = x_fit.min(), x_fit.max()
+    step = (x_max - x_min) / max(k - 1, 1)
+    means = x_min + step * torch.arange(k, device=device, dtype=x_fit.dtype)
+    # Degenerate (constant region): spread the means slightly.
+    means = torch.where(x_max > x_min, means, x_min + torch.arange(k, device=device, dtype=x_fit.dtype) * eps)
     var = x_fit.var(unbiased=False).clamp_min(eps).repeat(k)
     weights = torch.full((k,), 1.0 / k, device=device)
 
-    x = x_fit.view(n, 1)
-    log2pi = math.log(2.0 * math.pi)
+    shift = x_fit.mean()
+    centred = (x_fit - shift).view(n, 1)
+    design = torch.cat([centred * centred, centred, torch.ones_like(centred)], dim=1)  # (n, 3)
+    means = means - shift
+
     for _ in range(int(n_iters)):
-        logp = (
-            torch.log(weights.clamp_min(eps)).view(1, k)
-            - 0.5 * (log2pi + torch.log(var).view(1, k))
-            - 0.5 * (x - means.view(1, k)) ** 2 / var.view(1, k)
-        )
-        logp = logp - torch.logsumexp(logp, dim=1, keepdim=True)
-        resp = logp.exp()  # (n, k)
-        nk = resp.sum(0).clamp_min(eps)  # (k,)
+        resp = torch.softmax(design @ _quadratic_log_likelihood_terms(means, var, weights, eps), dim=1)
+        moments = resp.transpose(0, 1) @ design  # (k, 3): sums of r*x^2, r*x, r
+        nk = moments[:, 2].clamp_min(eps)
         weights = nk / n
-        means = (resp * x).sum(0) / nk
-        var = (resp * (x - means.view(1, k)) ** 2).sum(0) / nk
-        var = var.clamp_min(eps)
-    return means, var, weights
+        means = moments[:, 1] / nk
+        var = (moments[:, 0] / nk - means * means).clamp_min(eps)
+    return means + shift, var, weights
 
 
 def _assign_gmm(
@@ -678,16 +754,15 @@ def _assign_gmm(
 ) -> torch.Tensor:
     """Hard-assign each value in ``x_full`` to its most likely mixture component."""
     n = x_full.numel()
-    k = means.numel()
     out = torch.empty(n, dtype=torch.long, device=x_full.device)
-    logw = torch.log(weights.clamp_min(eps)).view(1, k)
-    half_logvar = 0.5 * torch.log(var).view(1, k)
-    m = means.view(1, k)
-    v = var.view(1, k)
+    # Same quadratic form as the E-step: one matmul per chunk instead of the
+    # subtract / square / divide / subtract chain, each of which wrote its own
+    # (chunk, K) array out to memory.
+    terms = _quadratic_log_likelihood_terms(means, var, weights, eps)
     for s in range(0, n, chunk):
         xc = x_full[s : s + chunk].view(-1, 1)
-        logp = logw - half_logvar - 0.5 * (xc - m) ** 2 / v
-        out[s : s + chunk] = logp.argmax(dim=1)
+        design = torch.cat([xc * xc, xc, torch.ones_like(xc)], dim=1)
+        out[s : s + chunk] = (design @ terms).argmax(dim=1)
     return out
 
 
@@ -737,17 +812,30 @@ def em_subdivide_labels(
     B = image.shape[0]
     device = image.device
     ref = image[:, channel]  # (B, D, H, W)
-    parents = torch.unique(label_map).long().tolist()  # sorted, batch-wide
+    # Per-sample label histogram in one pass. It answers three questions the loop below
+    # asked one at a time with a host synchronisation each: which labels exist batch-wide,
+    # which is the largest, and how many voxels each holds in each sample.
+    label_counts = _label_counts_per_sample(label_map)
+    totals = label_counts.sum(dim=0)
+    parents = totals.nonzero().flatten().tolist()  # sorted, batch-wide
+    if not parents:
+        # No non-negative label anywhere: every voxel is outside the annotated region.
+        # One undivided region, no EM, and a merge map that resolves -- rather than
+        # indexing an empty `parents` in the return statement at the end of this
+        # function. Previously unreachable, because the histogram clamped the negative
+        # labels into the background bin.
+        return torch.zeros_like(label_map), [0], [int(background_label)]
+    counts_per_sample = label_counts.tolist()
     parent_to_idx = {p: i for i, p in enumerate(parents)}
     lo, hi = int(background_clusters_range[0]), int(background_clusters_range[1])
     mult = max(hi, int(n_foreground_clusters)) + 1  # collision-free encoding
 
     # If the configured background label is absent (e.g. a *complete* one-hot whose
-    # decoding shifted every label by +1, so the real background is no longer 0),
-    # fall back to the largest-area label so it still receives the richer
-    # [min, max] background split rather than the 2-cluster foreground split.
-    if background_label not in parents and len(parents) > 0:
-        background_label = int(torch.bincount(label_map.flatten().clamp_min(0)).argmax())
+    # decoding shifted every label by +1, so the real background is no longer 0), fall back
+    # to the largest-area label, so it still receives the richer [min, max] background
+    # split rather than the 2-cluster foreground split.
+    if background_label not in parents:
+        background_label = int(totals.argmax())
 
     bg_n_shared = int(torch.randint(lo, hi + 1, (1,), device=device)) if same_on_batch else None
 
@@ -757,10 +845,10 @@ def em_subdivide_labels(
         ref_b = ref[b]
         for p in parents:
             pi = parent_to_idx[p]
-            mask = lab_b == p
-            cnt = int(mask.sum())
+            cnt = int(counts_per_sample[b][p])
             if cnt == 0:
                 continue
+            mask = lab_b == p
             if p == background_label:
                 k = bg_n_shared if bg_n_shared is not None else int(torch.randint(lo, hi + 1, (1,), device=device))
             else:
@@ -780,14 +868,63 @@ def em_subdivide_labels(
                 assign = torch.zeros(cnt, dtype=torch.long, device=device) if fit is None else _assign_gmm(x, *fit, eps=eps)
             fine[b, 0][mask] = pi * mult + assign
 
-    gen_values = torch.unique(fine).long().tolist()
+    gen_values = distinct_values(fine).tolist()
     out_values = [parents[g // mult] for g in gen_values]
     return fine, gen_values, out_values
 
 
-# ---------------------------------------------------------------------------
-# Label utilities  (lab2im.layers.RandomFlip / ConvertLabels)
-# ---------------------------------------------------------------------------
+def random_merge_classes(
+    parent_labels: Sequence[int],
+    merge_prob: float,
+    batch: int = 1,
+    device: torch.device | None = None,
+) -> torch.Tensor:
+    """Randomly tie sibling EM subregions to a shared generation Gaussian.
+
+    :func:`em_subdivide_labels` gives every subregion its own Gaussian, so an EM
+    split is always visible in the synthetic image as an intensity boundary the
+    segmentation target does not have. Merging siblings back at generation time
+    makes each such boundary show up in only a fraction of the samples, so the
+    network can rely neither on it nor on its absence. This is an extension: the
+    paper gives every subregion its own Gaussian, i.e. ``merge_prob=0``.
+
+    Each subregion after the first of its parent joins one of that parent's
+    existing classes with probability ``merge_prob``, and otherwise opens a new
+    one. ``0`` leaves every subregion independent; ``1`` collapses each parent to
+    a single Gaussian, as if its label had never been split. Siblings only:
+    letting a foreground subregion share the background's Gaussian would hide a
+    structure the target still asks for.
+
+    A separate pattern is drawn per sample, matching the per-sample GMM draws.
+
+    Args:
+        parent_labels: the parent label of each generation label, in generation
+            order (``output_labels`` from :func:`em_subdivide_labels`).
+        merge_prob: per-subregion probability of joining a sibling's class.
+        batch: number of independent merge patterns to draw.
+        device: device for the draws and the returned tensor.
+
+    Returns:
+        ``(batch, len(parent_labels))`` class indices, contiguous from 0 in each
+        row, for :func:`sample_gmm_parameters`.
+    """
+    n_labels = len(parent_labels)
+    classes = torch.empty((batch, n_labels), dtype=torch.long, device=device)
+    for b in range(batch):
+        taken: dict[int, list[int]] = {}
+        n_classes = 0
+        for i, parent in enumerate(parent_labels):
+            siblings = taken.setdefault(int(parent), [])
+            if siblings and float(torch.rand((), device=device)) < merge_prob:
+                classes[b, i] = siblings[int(torch.randint(len(siblings), (1,), device=device))]
+            else:
+                classes[b, i] = n_classes
+                siblings.append(n_classes)
+                n_classes += 1
+    return classes
+
+
+# --- Label utilities (lab2im.layers.RandomFlip / ConvertLabels) -----------------------------------
 def flip_lr_with_swap(
     label_map: torch.Tensor,
     flip_axis: int,

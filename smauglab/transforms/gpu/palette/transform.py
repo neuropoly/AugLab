@@ -7,8 +7,8 @@ import torch
 from torch import Tensor, nn
 
 from smauglab.registry import AugId, AugType, Backend, register
-from smauglab.transforms.gpu.base import ImageOnlyTransform
-from smauglab.transforms.gpu.fromSeg import _gaussian_blur_3d, collapse_onehot_to_index
+from smauglab.transforms.gpu.base import ImageOnlyTransform, segmentation_from
+from smauglab.transforms.gpu.fromSeg import _gaussian_blur_3d, collapse_onehot_to_index, voxel_coordinates
 from smauglab.transforms.gpu.palette.base import (
     BlockContext,
     InitialPartitioner,
@@ -104,7 +104,7 @@ class PaletteSynthesisGPU(ImageOnlyTransform):
         flags: dict[str, Any],
         transform: Tensor | None = None,
     ) -> Tensor:
-        seg_raw: torch.Tensor | None = params.get("seg")
+        seg_raw: torch.Tensor | None = segmentation_from(params)
 
         labels: torch.Tensor | None = None
         if seg_raw is not None and seg_raw.ndim == 5 and seg_raw.shape[1] > 1:
@@ -125,16 +125,9 @@ class PaletteSynthesisGPU(ImageOnlyTransform):
 
         flat_m_all = (images_01 > self.dark_threshold).float()  # foreground mask
 
-        # Voxel coordinates (shared — same spatial dims for every sample)
-        coords = torch.stack(
-            torch.meshgrid(
-                torch.arange(D, device=device, dtype=torch.float32),
-                torch.arange(H, device=device, dtype=torch.float32),
-                torch.arange(W, device=device, dtype=torch.float32),
-                indexing="ij",
-            ),
-            dim=-1,
-        ).reshape(N, 3)
+        # Voxel coordinates (shared — same spatial dims for every sample, and the
+        # same from one call to the next, so they are built once per patch shape).
+        coords = voxel_coordinates((D, H, W), device)
 
         # ── Step 1: the block stack builds a partition; the remap is fixed ─────
         synth_list = []

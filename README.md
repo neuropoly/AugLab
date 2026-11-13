@@ -1,4 +1,4 @@
-[![arXiv](https://img.shields.io/badge/Preprint-arXiv:2605.03098-orange)](https://arxiv.org/abs/2605.03098)
+[![paper](https://img.shields.io/badge/Paper-miccai2026-orange)](https://papers.miccai.org/miccai-2026/paper/1360_paper.pdf)
 [![PyPI](https://img.shields.io/pypi/v/smauglab)](https://pypi.org/project/smauglab/)
 [![Python Versions](https://img.shields.io/pypi/pyversions/smauglab)](https://pypi.org/project/smauglab/)
 [![tests](https://github.com/neuropoly/SmaugLab/actions/workflows/tests.yml/badge.svg)](https://github.com/neuropoly/SmaugLab/actions/workflows/tests.yml)
@@ -17,11 +17,15 @@ This repository investigates the influence of different data augmentation strate
 If you use SmaugLab, please make sure to cite the following paper:
 
 ```
-@article{molinier2026one,
-  title={One Sequence to Segment Them All: Efficient Data Augmentation for CT and MRI Cross-Domain 3D Spine Segmentation},
-  author={Molinier, Nathan and M{\"o}ller, Hendrik and Dagonneau, Thomas and Curto-Vilalta, Anna and Graf, Robert and Atad, Matan and Rueckert, Daniel and Kirschke, Jan S and Cohen-Adad, Julien},
-  journal={arXiv preprint arXiv:2605.03098},
-  year={2026}
+@InProceedings{moliniermoller_MICCAI2026_SmaugLab,
+        author = { Molinier, Nathan AND Möller, Hendrik AND Dagonneau, Thomas AND Curto-Vilalta, Anna AND Graf, Robert AND Atad, Matan AND Rueckert, Daniel AND Kirschke, Jan S. AND Cohen-Adad, Julien},
+        title = { { One Sequence to Segment Them All: Efficient Data Augmentation for CT and MRI Cross-Domain 3D Spine Segmentation } },
+        booktitle = {Medical Image Computing and Computer Assisted Intervention -- MICCAI 2026},
+        year = {2026},
+        publisher = {Springer Nature Switzerland},
+        volume = {LNCS 16881},
+        month = {September},
+        page = {pending}
 }
 ```
 
@@ -92,9 +96,34 @@ SMAUGLAB_PARAMS_GPU_JSON=/path/to/your/params.json nnUNetv2_train 100 3d_fullres
 
 > ⚠️ **Warning** : To avoid any paths issues, please specify an absolute path to your JSON file.
 
+### Mixed-precision gradient scale
+
+The trainer floors the AMP gradient scale at `1.0`. `torch`'s `GradScaler` halves the scale on every
+step with a non-finite gradient and only doubles it back after 2000 *consecutive* clean steps, with no
+floor underneath, so a bad-batch rate above 1-in-2000 drives it to exactly `0.0` -- at which point every
+gradient becomes `NaN`, clean batches included, and the run cannot recover while still logging epochs.
+Below `1.0` the scaler can only shrink gradients, so the floor costs nothing.
+
+`SMAUGLAB_MIN_GRAD_SCALE` overrides it, for the one case the default forecloses: gradients that genuinely
+overflow fp16 at scale 1, where halving is the correct response.
+
+```bash
+SMAUGLAB_MIN_GRAD_SCALE=0.25 nnUNetv2_train 100 3d_fullres 0 -tr nnUNetTrainerDAExtGPU -p nnUNetPlans
+```
+
+A value at or below zero is rejected, since that is the collapse the floor exists to prevent, and a value
+below `1.0` warns: a floor deep in the denormals trains on all-zero gradients without ever reporting a
+non-finite step. Resets are written to the training log and counted in the epoch summary either way.
+
 ## Run Monai training with SmaugLab augmentations
 
 > To use SmaugLab augmentations in a MONAI training pipeline, refer to the example [training script](https://github.com/neuropoly/SmaugLab/blob/main/scripts/train_monai.py). Key implementation lines required for proper integration are marked with a 🐞 emoji in the comments.
+
+SmaugLab's augmentations reach a MONAI pipeline *as* the GPU pipeline: MONAI loads the data and does the
+deterministic preprocessing, then `AugTransformsGPU(...).to(device)` augments each collated batch on device
+inside the training loop. Every augmentation in the GPU column of [Available augmentations](#available-augmentations)
+is therefore available here. There is no MONAI-native backend, and none is planned: the CPU column is
+batchgeneratorsv2 transforms for the nnU-Net dataloader, not MONAI `MapTransform`s.
 
 To run the Monai training script directly, you need to provide a config JSON (`config.json`) file with paths to the images and labels (ground truth) for TRAINING, VALIDATION and TESTING sets like this:
 ```json
@@ -158,61 +187,70 @@ Scripts developped in this repository use JSON files to specify image and segmen
 
 To track parameters used during data augmentation, JSON files are also used: see this [example](https://github.com/neuropoly/SmaugLab/blob/16653a84e031c40e25a72e946c2724494606b21c/smauglab/configs/transform_params.json)
 
+### Paper configs
 
-## Citation
+Two shipped configs are the setups behind the paper's tables. `smauglab hash <config>`
+prints the identity below, which is how a run folder named `...-c-<config_hash>` is
+traced back to the file that produced it.
 
-If you use SmaugLab, please make sure to cite the following paper:
+| shipped config | config hash | paper setup |
+| --- | --- | --- |
+| `smauglab/configs/transform_params_one-sequence-to-segment-them-all.json` | `c69b9872` | Ours |
+| `smauglab/configs/transform_params_paper-synthseg.json` | `580beb13` | SynthSeg |
 
-```
-@article{molinier2026one,
-  title={One Sequence to Segment Them All: Efficient Data Augmentation for CT and MRI Cross-Domain 3D Spine Segmentation},
-  author={Molinier, Nathan and M{\"o}ller, Hendrik and Dagonneau, Thomas and Curto-Vilalta, Anna and Graf, Robert and Atad, Matan and Rueckert, Daniel and Kirschke, Jan S and Cohen-Adad, Julien},
-  journal={arXiv preprint arXiv:2605.03098},
-  year={2026}
-}
-```
+The SynthSeg config hashed to `0d5d802f` until `em_merge_prob: 0.0` was added to it;
+the two files generate identically, so a run folder named `...-c-0d5d802f` is the same
+setup.
+
+Despite the name, "SynthSeg" is not "Ours plus SynthSeg": it is Ours with all six
+transfer augmentations (`RandomScharrGPU`, `RandomUnsharpMaskGPU`, `RandomRandConvGPU`,
+`RandomRedistributeSegGPU`, `RandomInverseGPU`, `RandomHistogramEqualizationGPU`) at
+`p=0` and `RandomSynthSegGPU` at `p=1.0` in their place. The general-enhancement half is
+identical between the two.
 
 ## Available augmentations
 
-Which augmentations exist, and which backends implement each one. An empty cell
-means no implementation on that backend yet. Regenerate with `smauglab matrix --write`.
+Which augmentations exist, and which of the two backends implements each one. An empty
+cell means no implementation on that backend yet. MONAI training draws from the GPU
+column -- see "Run Monai training with SmaugLab augmentations" above. Regenerate with
+`smauglab matrix --write`.
 
 <!-- BEGIN AUG MATRIX (generated by `smauglab matrix --write`; do not edit) -->
-| Augmentation | Group | GPU | CPU | MONAI |
-| --- | --- | --- | --- | --- |
-| flip | GEO | `RandomFlipTransformGPU` | — | — |
-| affine | GEO | `RandomAffineGPU` | — | — |
-| crop | GEO | `RandomCropTransformGPU` | — | — |
-| spatial | GEO | — | `SpatialTransform` | — |
-| gaussian_noise | GE | `RandomGaussianNoiseGPU` | `GaussianNoiseTransform` | — |
-| gaussian_blur | GE | `RandomGaussianBlurGPU` | `GaussianBlurTransform` | — |
-| brightness | GE | `RandomBrightnessGPU` | `MultiplicativeBrightnessTransform` | — |
-| contrast | GE | `RandomContrastGPU` | `ContrastTransform` | — |
-| gamma | GE | `RandomGammaGPU` | `GammaTransform` | — |
-| inv_gamma | GE | `RandomInvGammaGPU` | `InvertedGammaTransform` | — |
-| clamp | GE | `RandomClampGPU` | — | — |
-| low_res | GE | `RandomLowResTransformGPU` | `SimulateLowResolutionTransform` | — |
-| acq | GE | `RandomAcqTransformGPU` | — | — |
-| zscore | GE | `ZscoreNormalizationGPU` | `ZscoreNormalization` | — |
-| mirror | GEO | — | `MirrorTransform` | — |
-| scharr | TA | `RandomScharrGPU` | `ScharrConvTransform` | — |
-| laplace | TA | `RandomLaplaceGPU` | `LaplaceConvTransform` | — |
-| unsharp_mask | TA | `RandomUnsharpMaskGPU` | — | — |
-| rand_conv | TA | `RandomRandConvGPU` | — | — |
-| bias_field | TA | `RandomBiasFieldGPU` | — | — |
-| inverse | TA | `RandomInverseGPU` | — | — |
-| histogram_equal | TA | `RandomHistogramEqualizationGPU` | `HistogramEqualTransform` | — |
-| redistribute_seg | TA | `RandomRedistributeSegGPU` | `RedistributeTransform` | — |
-| palette | TA | `RandomPaletteGPU` | — | — |
-| palette_composed | TA | `PaletteSynthesisGPU` | — | — |
-| domain_transfer | TA | `RandomDomainTransferGPU` | — | — |
-| synthseg | TA | `RandomSynthSegGPU` | — | — |
-| artifact | TA | — | `ArtifactTransform` | — |
-| spatial_custom | GEO | — | `SpatialCustomTransform` | — |
-| shape | GE | — | `ShapeTransform` | — |
-| func_log1p | TA | `RandomLog1pGPU` | `Log1pTransform` | — |
-| func_sqrt | TA | `RandomSqrtGPU` | `SqrtTransform` | — |
-| func_sin | TA | `RandomSinGPU` | `SinTransform` | — |
-| func_exp | TA | `RandomExpGPU` | `ExpTransform` | — |
-| func_sigmoid | TA | `RandomSigmoidGPU` | `SigmoidTransform` | — |
+| Augmentation | Group | GPU | CPU |
+| --- | --- | --- | --- |
+| flip | GEO | `RandomFlipTransformGPU` | — |
+| affine | GEO | `RandomAffineGPU` | — |
+| crop | GEO | `RandomCropTransformGPU` | — |
+| spatial | GEO | — | `SpatialTransform` |
+| gaussian_noise | GE | `RandomGaussianNoiseGPU` | `GaussianNoiseTransform` |
+| gaussian_blur | GE | `RandomGaussianBlurGPU` | `GaussianBlurTransform` |
+| brightness | GE | `RandomBrightnessGPU` | `MultiplicativeBrightnessTransform` |
+| contrast | GE | `RandomContrastGPU` | `ContrastTransform` |
+| gamma | GE | `RandomGammaGPU` | `GammaTransform` |
+| inv_gamma | GE | `RandomInvGammaGPU` | `InvertedGammaTransform` |
+| clamp | GE | `RandomClampGPU` | — |
+| low_res | GE | `RandomLowResTransformGPU` | `SimulateLowResolutionTransform` |
+| acq | GE | `RandomAcqTransformGPU` | — |
+| zscore | GE | `ZscoreNormalizationGPU` | `ZscoreNormalization` |
+| mirror | GEO | — | `MirrorTransform` |
+| scharr | TA | `RandomScharrGPU` | `ScharrConvTransform` |
+| laplace | TA | `RandomLaplaceGPU` | `LaplaceConvTransform` |
+| unsharp_mask | TA | `RandomUnsharpMaskGPU` | — |
+| rand_conv | TA | `RandomRandConvGPU` | — |
+| bias_field | TA | `RandomBiasFieldGPU` | — |
+| inverse | TA | `RandomInverseGPU` | — |
+| histogram_equal | TA | `RandomHistogramEqualizationGPU` | `HistogramEqualTransform` |
+| redistribute_seg | TA | `RandomRedistributeSegGPU` | `RedistributeTransform` |
+| palette | TA | `RandomPaletteGPU` | — |
+| palette_composed | TA | `PaletteSynthesisGPU` | — |
+| domain_transfer | TA | `RandomDomainTransferGPU` | — |
+| synthseg | TA | `RandomSynthSegGPU` | — |
+| artifact | TA | — | `ArtifactTransform` |
+| spatial_custom | GEO | — | `SpatialCustomTransform` |
+| shape | GE | — | `ShapeTransform` |
+| func_log1p | TA | `RandomLog1pGPU` | `Log1pTransform` |
+| func_sqrt | TA | `RandomSqrtGPU` | `SqrtTransform` |
+| func_sin | TA | `RandomSinGPU` | `SinTransform` |
+| func_exp | TA | `RandomExpGPU` | `ExpTransform` |
+| func_sigmoid | TA | `RandomSigmoidGPU` | `SigmoidTransform` |
 <!-- END AUG MATRIX -->

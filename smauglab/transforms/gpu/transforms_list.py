@@ -14,7 +14,7 @@ import torch
 from torch import Tensor, nn
 
 from smauglab.transforms.build import PipelineMode
-from smauglab.transforms.gpu.base import ImageOnlyTransform
+from smauglab.transforms.gpu.base import ImageOnlyTransform, segmentation_from
 from smauglab.transforms.gpu.transforms import AugTransformsGPU
 
 
@@ -99,19 +99,24 @@ class RandomChooseXTransformsGPU(ImageOnlyTransform):
         if seg is not None:
             child_params["seg"] = seg
 
-        for j in idx.tolist():
+        chosen = idx.tolist()
+        # One read of k uniforms instead of an `if` on a device scalar per transform:
+        # comparing a CUDA tensor against `t.p` inside an `if` forces a host synchronisation
+        # each time, and this runs once per sample per bucket. Each transform still gets its
+        # own independent draw, but no longer one at a time, so the stream differs.
+        draws = torch.rand(len(chosen), device=x.device, dtype=x.dtype).tolist()
+
+        for draw, j in zip(draws, chosen):
             t = self.transforms_list[j]
-            if torch.rand(1, device=x.device, dtype=x.dtype) > t.p:
+            if draw > t.p:
                 continue
             if not hasattr(t, "apply_transform"):
                 raise TypeError(f"All transforms must implement apply_transform like ImageOnlyTransform. Got {type(t)}")
-            # Most contrast transforms perform their random sampling inside
-            # apply_transform, so an empty params dict is all they need. The ones with a
-            # kornia `_param_generator` (the spatial transforms) read their draw out of
-            # `params` instead, and calling apply_transform directly skips the
-            # forward_parameters step that fills it -- they used to raise
-            # "params must contain 'scale'" from inside a bucket. Sampling here keeps
-            # the bucket usable for both kinds.
+            # Most contrast transforms sample inside apply_transform, so an empty params
+            # dict is all they need. The ones with a kornia `_param_generator` (the spatial
+            # transforms) read their draw out of `params`, and calling apply_transform
+            # directly skips the forward_parameters step that fills it -- they raised
+            # "params must contain 'scale'" from inside a bucket. Sampling here serves both.
             t_params = child_params
             if getattr(t, "_param_generator", None) is not None:
                 t_params = {**child_params, **self._sample_params(t, x.shape)}
@@ -121,20 +126,18 @@ class RandomChooseXTransformsGPU(ImageOnlyTransform):
 
     @torch.no_grad()  # disable gradients for efficiency
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
-        seg = params.get("seg")
+        seg = segmentation_from(params)
 
         if self.same_on_batch:
             return self._apply_mix(input, seg)
 
         batch_size = input.shape[0]
-        # A clone, not `out = input`: the loop writes back through `out[i:i+1]`, so
-        # without it the caller's batch is modified in place. Every sibling transform
-        # in gpu/spatial.py clones.
-        out = input.clone()
+        # The per-sample results are concatenated rather than written back into a clone of
+        # the input, which wrote the whole batch out only for every row to be overwritten.
+        # Nothing here writes through `input` -- each leaf clones before it assigns, which
+        # `test_no_inplace_mutation` pins -- so the caller's batch stays untouched.
+        rows = []
         for i in range(batch_size):
-            xi = out[i : i + 1]
-            seg_i = None
             seg_i = seg[i : i + 1] if seg is not None and isinstance(seg, torch.Tensor) and seg.shape[0] == batch_size else seg
-            xi = self._apply_mix(xi, seg_i)
-            out[i : i + 1] = xi
-        return out
+            rows.append(self._apply_mix(input[i : i + 1], seg_i))
+        return torch.cat(rows, dim=0)
