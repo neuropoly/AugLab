@@ -258,11 +258,13 @@
             "same_on_batch": false
         },
         "RandomUnsharpMaskGPU": {
+            "amount_min": 0.0,
             "apply_to_channel": [
                 0
             ],
             "in_seg": 0.0,
             "keepdim": true,
+            "kernel_size": 3,
             "mix_in_out": false,
             "mix_prob": 0.0,
             "out_seg": 0.0,
@@ -271,6 +273,7 @@
             "retain_stats": false,
             "same_on_batch": false,
             "sigma": 1.0,
+            "sigma_min": 0.0,
             "unsharp_amount": 1.5
         },
         "RandomRandConvGPU": {
@@ -414,12 +417,14 @@
             "p": 1.0,
             "p_batch": 1.0,
             "retain_stats": false,
-            "same_on_batch": false
+            "same_on_batch": false,
+            "scale_range": null
         },
         "RandomSqrtGPU": {
             "apply_to_channel": [
                 0
             ],
+            "exponent_range": null,
             "in_seg": 0.0,
             "keepdim": true,
             "mix_in_out": false,
@@ -433,6 +438,7 @@
             "apply_to_channel": [
                 0
             ],
+            "frequency_range": null,
             "in_seg": 0.0,
             "keepdim": true,
             "mix_in_out": false,
@@ -452,12 +458,17 @@
             "out_seg": 0.0,
             "p": 1.0,
             "p_batch": 1.0,
+            "rate_range": null,
             "retain_stats": false,
             "same_on_batch": false
         },
         "RandomSigmoidGPU": {
             "apply_to_channel": [
                 0
+            ],
+            "center_quantile_range": [
+                0.1,
+                0.9
             ],
             "in_seg": 0.0,
             "keepdim": true,
@@ -466,7 +477,8 @@
             "p": 1.0,
             "p_batch": 1.0,
             "retain_stats": false,
-            "same_on_batch": false
+            "same_on_batch": false,
+            "slope_range": null
         },
         "RandomLowResTransformGPU": {
             "keepdim": true,
