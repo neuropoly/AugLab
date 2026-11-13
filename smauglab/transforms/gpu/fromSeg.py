@@ -265,6 +265,13 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
     only changes which setting you get by default. `transform_params_hybrid.json`
     and `transform_params_hybrid_TAGE.json` ask for False explicitly and are
     unaffected.
+
+    `min_redist_std` floors the width of each label's Gaussian bump, in the `[0, 1]`
+    min-max units the remap is built in. The bumps are rescaled to a peak-to-peak of 2,
+    so a narrow one maps a thin band of intensities onto a swing larger than the whole
+    input range, and voxel noise inside that band comes out as salt-and-pepper. The
+    default 0.01 is the historical floor; 0.05 keeps the remap's slope at about a fifth
+    of that worst case.
     """
 
     def __init__(
@@ -278,13 +285,17 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
         keepdim: bool = True,
         std_noise_range: Sequence[float] = (0.1, 0.3),
         dilation_iterations_range: Sequence[int] = (1, 3),
+        min_redist_std: float = 0.01,
     ) -> None:
         super().__init__(p=p, p_batch=p_batch, same_on_batch=same_on_batch, keepdim=keepdim)
+        if min_redist_std <= 0:
+            raise ValueError(f"min_redist_std must be positive, got {min_redist_std}")
         self.in_seg = in_seg
         self.apply_to_channel = apply_to_channel
         self.retain_stats = retain_stats
         self.std_noise_range = std_noise_range
         self.dilation_iterations_range = dilation_iterations_range
+        self.min_redist_std = min_redist_std
 
     @torch.no_grad()
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
@@ -393,7 +404,7 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
                 )
                 redist_std = torch.maximum(
                     torch.rand(R, device=input.device) * std_noise_range + 0.4 * torch.abs((means - dil_means) * stds / (dil_stds + 1e-6)),
-                    torch.full((R,), 0.01, device=input.device, dtype=input.dtype),
+                    torch.full((R,), self.min_redist_std, device=input.device, dtype=input.dtype),
                 )
 
                 # Accumulated in place rather than stacked: the global branch built a list

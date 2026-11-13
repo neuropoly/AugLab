@@ -218,6 +218,7 @@
             ],
             "in_seg": 0.2,
             "keepdim": true,
+            "min_redist_std": 0.01,
             "p": 1.0,
             "p_batch": 1.0,
             "retain_stats": true,
