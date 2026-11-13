@@ -318,6 +318,7 @@
             "out_seg": 0.0,
             "p": 1.0,
             "p_batch": 1.0,
+            "relative": false,
             "same_on_batch": false,
             "std": 1.0
         },
