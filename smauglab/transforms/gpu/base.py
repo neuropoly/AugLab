@@ -2,8 +2,8 @@ import contextlib
 import copy
 import functools
 import warnings
-from collections.abc import Sequence
-from typing import Any, Protocol, Union
+from collections.abc import Iterator, Sequence
+from typing import TYPE_CHECKING, Any, Protocol, Union
 
 import kornia.augmentation as K
 import torch
@@ -31,6 +31,11 @@ from kornia.geometry.keypoints import Keypoints
 from torch import Tensor
 from torch.distributions import RelaxedBernoulli
 from torch.nn import Module
+
+from smauglab.transforms.rng import shared_rand
+
+if TYPE_CHECKING:
+    from smauglab.config import SplitSpec
 
 try:  # private to kornia, and the only part of the faster parameter draw that needs it
     from kornia.augmentation.container.image import ImageSequentialBase, _get_new_batch_shape
@@ -138,7 +143,12 @@ class ImageOnlyTransform(RigidAffineAugmentationBase3D):
 
 
 class AugmentationSequentialCustom(AugmentationSequential):
-    """Custom AugmentationSequential to handle masks augmentations."""
+    """Custom AugmentationSequential to handle masks augmentations.
+
+    `split` makes groups of stages mutually exclusive (see `smauglab.config.SplitSpec`):
+    one path is drawn per call, and the stages of every other path are left out of that
+    call's forward sequence, so they neither draw parameters nor touch image or mask.
+    """
 
     def __init__(
         self,
@@ -150,6 +160,7 @@ class AugmentationSequentialCustom(AugmentationSequential):
         random_apply_weights: list[float] | None = None,
         transformation_matrix_mode: str = "silent",
         extra_args: dict[DataKey, dict[str, Any]] | None = None,
+        split: "SplitSpec | None" = None,
     ) -> None:
         self._transform_matrix: Tensor | None
         self._transform_matrices: list[Tensor | None] = []
@@ -197,6 +208,60 @@ class AugmentationSequentialCustom(AugmentationSequential):
                 self.contains_3d_augmentation = True
         self._transform_matrix = None
         self.extra_args = extra_args or {DataKey.MASK: {"resample": Resample.NEAREST, "align_corners": None}}
+
+        self.split_spec = split
+        self._split_paths = None if split is None else self._resolve_split(split)
+
+    def _resolve_split(self, split: "SplitSpec") -> tuple[frozenset[str], ...]:
+        """Each path as the names of the child modules it covers.
+
+        A config key is its transform's class name, so that is the match. Every name
+        must be exactly one stage here: a stage wrapped in a `RandomChooseX` bucket is
+        not a child, and gating something that is not there would make the split a
+        silent no-op.
+        """
+        by_class: dict[str, list[str]] = {}
+        for child_name, child in self.named_children():
+            by_class.setdefault(type(child).__name__, []).append(child_name)
+        paths = []
+        for path in split.paths:
+            members = set()
+            for name in path:
+                found = by_class.get(name, [])
+                if len(found) != 1:
+                    raise ValueError(
+                        f"pipeline.split names {name!r}, which is {'not a stage' if not found else 'more than one stage'} of this pipeline"
+                    )
+                members.add(found[0])
+            paths.append(frozenset(members))
+        return tuple(paths)
+
+    def _draw_skipped(self) -> frozenset[str]:
+        """Draw this call's path; return the stages of every other path."""
+        assert self.split_spec is not None and self._split_paths is not None
+        # The shared draw, so DDP ranks take the same path for the same batch.
+        draw = float(shared_rand((1,), torch.device("cpu")).item())
+        taken, cumulative = len(self.split_spec.p) - 1, 0.0
+        for index, p in enumerate(self.split_spec.p):
+            cumulative += p
+            if draw < cumulative:
+                taken = index
+                break
+        return frozenset().union(*(path for index, path in enumerate(self._split_paths) if index != taken))
+
+    def get_forward_sequence(self, params: list[ParamItem] | None = None) -> Iterator[tuple[str, Module]]:
+        """kornia's forward sequence, minus the stages of the paths not taken.
+
+        Only the parameter-drawing call (`params is None`) is filtered; `forward` then
+        iterates the parameters that call produced, so a skipped stage is skipped for
+        the image and the mask alike. Calls that replay `params` resolve stages from
+        them and are left alone.
+        """
+        sequence = super().get_forward_sequence(params)
+        if params is not None or self._split_paths is None:
+            return sequence
+        skipped = self._draw_skipped()
+        return ((name, module) for name, module in sequence if name not in skipped)
 
     def forward_parameters(self, batch_shape: torch.Size) -> list[ParamItem]:
         """kornia's own loop, with each leaf's draw routed through `_leaf_parameters`.

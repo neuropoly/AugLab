@@ -36,4 +36,5 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             *transforms,
             data_keys=["input", "mask"],
             same_on_batch=True if config.same_on_batch() else None,
+            split=config.pipeline_split(),
         )
