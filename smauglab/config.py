@@ -13,6 +13,9 @@ A key is a class name, exactly, and a parameter is a constructor argument, exact
 checked against the registry, and every problem in a file is reported at once rather than
 one per run.
 
+`pipeline.split` (see `SplitSpec`) names mutually exclusive groups of GPU transforms; each
+batch runs exactly one of them, alongside everything the split does not name.
+
 A flat document with no section is rejected: it was interpreted as "GPU or CPU, whichever
 the keys look like", and the two namespaces overlapped enough that `GaussianBlurTransform`
 meant different transforms depending on which builder read it. `SECTION_HINT` below is what
@@ -25,6 +28,8 @@ import copy
 import difflib
 import functools
 import json
+import math
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -96,7 +101,85 @@ def validate_section(section: dict, backend: Backend, *, source: str = "<config>
 RESERVED_SECTIONS = ("pipeline",)
 
 #: Keys the `pipeline` section may hold.
-PIPELINE_KEYS = ("mode", "order", "random_choose", "same_on_batch")
+PIPELINE_KEYS = ("mode", "order", "random_choose", "same_on_batch", "split")
+
+#: Keys `pipeline.split` may hold.
+SPLIT_KEYS = ("paths", "p")
+
+
+@dataclass(frozen=True)
+class SplitSpec:
+    """`pipeline.split`: mutually exclusive paths through the GPU pipeline.
+
+        "pipeline": {"split": {"paths": [["RandomSynthSegGPU"],
+                                         ["RandomInverseGPU", "RandomScharrGPU"]],
+                               "p": [0.5, 0.5]}}
+
+    Each batch takes exactly one path, path `i` with probability `p[i]`. The transforms
+    named in the paths it did not take are skipped for that batch; those in the path it
+    took run as usual, each still subject to its own `p`; and every transform the split
+    does not name runs on every batch. Pipeline order is untouched -- a split decides
+    which transforms run, never in what order -- so a path need not be contiguous.
+
+    The draw is one per batch, like every other probability under the default
+    `same_on_batch: true`, which is why the split refuses `same_on_batch: false`. An
+    empty path is allowed and means "none of the others".
+    """
+
+    paths: tuple[tuple[str, ...], ...]
+    p: tuple[float, ...]
+
+    @classmethod
+    def from_payload(cls, raw: dict) -> SplitSpec:
+        return cls(tuple(tuple(path) for path in raw["paths"]), tuple(float(p) for p in raw["p"]))
+
+
+def _split_problems(split: Any, pipeline: dict, gpu_section: Any) -> list[str]:
+    """Every problem with `pipeline.split`. Empty means `SplitSpec.from_payload` will build."""
+    if not isinstance(split, dict):
+        return ["pipeline.split: expected an object with 'paths' and 'p'"]
+    problems = [
+        f"pipeline.split: unknown key {key!r}. Accepted: {', '.join(SPLIT_KEYS)}."
+        for key in split
+        if not key.startswith("_") and key not in SPLIT_KEYS
+    ]
+
+    paths, probabilities = split.get("paths"), split.get("p")
+    if not (
+        isinstance(paths, list)
+        and len(paths) >= 2
+        and all(isinstance(path, list) and all(isinstance(n, str) for n in path) for path in paths)
+    ):
+        problems.append("pipeline.split.paths: expected a list of at least two lists of GPU transform names")
+        paths = None
+    if not (isinstance(probabilities, list) and all(isinstance(p, (int, float)) and not isinstance(p, bool) for p in probabilities)):
+        problems.append("pipeline.split.p: expected a list of probabilities, one per path")
+        probabilities = None
+    elif any(not 0.0 <= p <= 1.0 for p in probabilities) or not math.isclose(sum(probabilities), 1.0, abs_tol=1e-6):
+        problems.append(f"pipeline.split.p: each must lie in [0, 1] and together they must sum to 1, got {probabilities}")
+    if paths is not None and probabilities is not None and len(paths) != len(probabilities):
+        problems.append(f"pipeline.split: {len(paths)} paths but {len(probabilities)} probabilities")
+
+    if paths is not None:
+        configured = {k for k in gpu_section if not k.startswith("_")} if isinstance(gpu_section, dict) else set()
+        seen: set[str] = set()
+        for path in paths:
+            for name in path:
+                if name in seen:
+                    problems.append(f"pipeline.split.paths: {name!r} is named twice; a transform belongs to one path at most")
+                seen.add(name)
+                if name not in configured:
+                    close = difflib.get_close_matches(name, sorted(configured), n=2, cutoff=0.6)
+                    hint = f" Did you mean: {', '.join(close)}?" if close else ""
+                    problems.append(f"pipeline.split.paths: {name!r} is not in the GPU section.{hint}")
+
+    mode = pipeline.get("mode")
+    if mode not in (None, PipelineMode.SEQUENTIAL.value):
+        problems.append(f"pipeline.split: needs the sequential pipeline; mode {mode!r} buckets the transforms the split would gate")
+    if pipeline.get("same_on_batch") is False:
+        problems.append("pipeline.split: draws one path per batch, so it cannot be combined with same_on_batch: false")
+    return problems
+
 
 #: What to do about a config that has no backend section. Quoted by both errors that
 #: can report it, so the two cannot drift apart.
@@ -176,6 +259,11 @@ class SmaugConfig:
         raw = self.payload.get("pipeline", {}).get("same_on_batch")
         return True if raw is None else bool(raw)
 
+    def pipeline_split(self) -> SplitSpec | None:
+        """The exclusive GPU paths `pipeline.split` asks for, or None without one."""
+        raw = self.payload.get("pipeline", {}).get("split")
+        return None if raw is None else SplitSpec.from_payload(raw)
+
     def names(self, backend: Backend) -> list[str]:
         return [k for k in self.section(backend) if not k.startswith("_")]
 
@@ -246,6 +334,9 @@ class SmaugConfig:
                 close = difflib.get_close_matches(str(mode), valid, n=2, cutoff=0.5)
                 hint = f" Did you mean: {', '.join(close)}?" if close else ""
                 problems.append(f"pipeline.mode: unknown mode {mode!r}. Accepted: {', '.join(valid)}.{hint}")
+
+        if "split" in pipeline:
+            problems.extend(_split_problems(pipeline["split"], pipeline, self.payload.get(Backend.GPU.value)))
         return problems
 
 

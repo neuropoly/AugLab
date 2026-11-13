@@ -199,12 +199,16 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
                 # See AugTransformsGPU: True forces the flag onto every child and
                 # spends each transform's `p` once for the whole batch.
                 same_on_batch=True if config.same_on_batch() else None,
+                split=config.pipeline_split(),
             ).to(self.device)
 
         print(f"Using SmaugLab transforms from: {json_path}")
         print(
             f"  CPU: {len(config.names(Backend.CPU))} augmentations, GPU: {len(config.names(Backend.GPU))}, mode: {config.pipeline_mode().value}"
         )
+        split = config.pipeline_split()
+        if split is not None:
+            print(f"  split: one of {len(split.paths)} paths per batch, p={list(split.p)}, paths={[list(path) for path in split.paths]}")
 
         _record_config(json_path, os.path.join(self.output_folder, "transform_params_used_for_training.json"))
 
