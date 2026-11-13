@@ -50,6 +50,8 @@ MANIFEST
 # configs beside it are tracked only because they predate the blanket rule above;
 # a new one has to say so.
 !smauglab/configs/transform_params_paper-synthseg.json
+# PALETTE alone with the Voronoi split and the per-label remap off and a blur floor.
+!smauglab/configs/transform_params_paper-palette-clean.json
 *.yaml
 *.nii
 *.nii.gz
