@@ -718,7 +718,15 @@ class RandomGaussianNoiseGPU(ImageOnlyTransform):
 
     Args:
         mean (float): Mean of the Gaussian noise. Default is 0.0.
-        std (float): Standard deviation of the Gaussian noise. Default is 0.1.
+        std (float): Upper bound of the noise standard deviation, which is drawn from
+            `U(0, std)` per sample (or once, with `same_on_batch`). Default is 1.0.
+        relative (bool): Read `std` as a fraction of each sample's own standard deviation
+            in that channel rather than in absolute intensity units. The absolute form
+            makes the same config a different augmentation on every intensity scale: a
+            z-scored MR patch (std ~0.9), a CT patch under nnU-Net's CT normalisation
+            (std ~0.17) and a `[0, 1]` SynthSeg synthesis (std ~0.18) see noise at the
+            same absolute std, so the last two are mostly noise. `mean` stays absolute.
+            Default False.
         same_on_batch (bool): Apply the same transformation across the batch. Default is False.
         p (float): Probability of applying the transform. Default is 1.0.
         keepdim (bool): Whether to keep the number of dimensions. Default is False.
@@ -731,6 +739,7 @@ class RandomGaussianNoiseGPU(ImageOnlyTransform):
         self,
         mean: float = 0.0,
         std: float = 1.0,
+        relative: bool = False,
         apply_to_channel: Sequence[int] = (0,),  # Apply to first channel by default
         same_on_batch: bool = False,
         in_seg: float = 0.0,
@@ -744,6 +753,7 @@ class RandomGaussianNoiseGPU(ImageOnlyTransform):
         self.apply_to_channel = apply_to_channel
         self.mean = mean
         self.std = std
+        self.relative = relative
         self.in_seg = in_seg
         self.out_seg = out_seg
         self.mix_in_out = mix_in_out
@@ -757,13 +767,16 @@ class RandomGaussianNoiseGPU(ImageOnlyTransform):
             if self.same_on_batch:
                 std = torch.rand(1, device=input.device, dtype=input.dtype) * self.std
                 noise = torch.randn_like(input[:, c], device=input.device, dtype=input.dtype)
-                noise = noise * std + self.mean
             else:
                 std = torch.rand(input.shape[0], device=input.device, dtype=input.dtype) * self.std
                 noise = torch.randn_like(input[:, c], device=input.device, dtype=input.dtype)
-                # Broadcast the per-sample std instead of writing one row at a time:
-                # same draws, same arithmetic, one kernel instead of N.
-                noise = noise * std.view(-1, *([1] * (noise.dim() - 1))) + self.mean
+            if self.relative:
+                # Scaled after both draws, so the random stream is the absolute form's.
+                std = std * input[:, c].reshape(input.shape[0], -1).std(dim=1)
+            # Broadcast the per-sample std instead of writing one row at a time:
+            # same draws, same arithmetic, one kernel instead of N. A one-element std
+            # (`same_on_batch`, absolute) broadcasts the same way it did unreshaped.
+            noise = noise * std.view(-1, *([1] * (noise.dim() - 1))) + self.mean
 
             orig = input[:, c]
             x = orig + noise
