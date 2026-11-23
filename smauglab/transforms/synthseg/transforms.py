@@ -102,6 +102,13 @@ class RandomSynthSegGPU(ImageOnlyTransform):
 
     Args:
         apply_to_channel: image channels to overwrite with the synthesis.
+        zscore_output: z-score each synthesised sample over its whole patch before it
+            replaces the image. With ``normalise=True`` (SynthSeg's default) the synthesis
+            is min-max scaled to ``[0, 1]``, about a fifth of the spread of a z-scored
+            training patch, and every later transform that works in absolute units --
+            ``RandomGaussianNoiseGPU`` draws its std from ``U(0, std)`` -- then acts on the
+            synthetic samples at five times the strength it has on the real ones.
+            Default False, which keeps the ``[0, 1]`` output.
         p: application probability (Kornia convention).
         Remaining kwargs are forwarded to :class:`SynthSegGenerator` (e.g.
         ``n_channels``, ``prior_means``, ``bias_field_std``, ``gamma_std``,
@@ -112,6 +119,7 @@ class RandomSynthSegGPU(ImageOnlyTransform):
         self,
         apply_to_channel: list[int] | None = None,
         same_on_batch: bool = False,
+        zscore_output: bool = False,
         p: float = 0.5,
         p_batch: float = 1.0,
         keepdim: bool = True,
@@ -119,6 +127,7 @@ class RandomSynthSegGPU(ImageOnlyTransform):
     ) -> None:
         super().__init__(p=p, p_batch=p_batch, same_on_batch=same_on_batch, keepdim=keepdim)
         self.apply_to_channel = apply_to_channel if apply_to_channel is not None else [0]
+        self.zscore_output = zscore_output
         gen_kwargs = _filter_generator_kwargs(kwargs)
         # Intensity-only: never deform/flip internally (geometry comes from the
         # surrounding sequential, which also transports the mask).
@@ -143,6 +152,9 @@ class RandomSynthSegGPU(ImageOnlyTransform):
             if torch.isnan(x).any() or torch.isinf(x).any():
                 print(f"Warning nan: {self.__class__.__name__}", flush=True)
                 continue
+            if self.zscore_output:
+                dims = tuple(range(1, x.dim()))
+                x = (x - x.mean(dim=dims, keepdim=True)) / x.std(dim=dims, keepdim=True).clamp_min(1e-8)
             input[:, c] = x
         return input
 
