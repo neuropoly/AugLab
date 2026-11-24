@@ -404,6 +404,7 @@
             "out_seg": 0.0,
             "p": 1.0,
             "p_batch": 1.0,
+            "preserve_range": false,
             "retain_stats": false,
             "same_on_batch": false
         },

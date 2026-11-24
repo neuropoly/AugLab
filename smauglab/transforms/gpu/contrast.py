@@ -1063,13 +1063,22 @@ class RandomInvGammaGPU(_RandomGammaBaseGPU):
     group=AugType.GE,
 )
 class RandomContrastGPU(ImageOnlyTransform):
-    """Apply random gamma adjustment to image.
+    """Random contrast: scale each sample's deviation from its own mean by a random factor.
     If the image is torch Tensor, it is expected to have [N, C, X, Y] or [N, C, X, Y, Z] shape.
 
+    Without `preserve_range` the result is `factor * x + (1 - factor) * mean`, a global
+    affine map. A network whose first layer is conv -> InstanceNorm removes the scale
+    exactly and sees the offset only through the zero padding at the patch border, so the
+    transform barely changes what such a network trains on.
+
     Args:
-        contrast_range (tuple of float): Range of gamma multipliers. Default is (0.9, 1.1).
-        apply_to_channel (list of int): List of channel indices to apply the gamma adjustment to. Default is [0].
-        retain_stats (bool): If True, retain the original mean and standard deviation of the image after gamma adjustment. Default is False.
+        contrast_range (tuple of float): Range the factor is drawn from, uniformly. Default is (0.75, 1.25).
+        apply_to_channel (list of int): List of channel indices to apply the contrast change to. Default is [0].
+        retain_stats (bool): If True, restore the original mean and standard deviation of the channel afterwards. Default is False.
+        preserve_range (bool): If True, clip the result to the sample's original [min, max], as nnU-Net's
+            `ContrastTransform(preserve_range=True)` does. A factor above 1 then saturates both tails,
+            which is not an affine map. The clip comes before `retain_stats`, which on its own would
+            undo the whole change. Default is False, the unclipped behavior of every existing config.
         same_on_batch (bool): Apply the same transformation across the batch. Default is False.
         p (float): Probability of applying the transform. Default is 1.0.
         keepdim (bool): Whether to keep the number of dimensions. Default is False.
@@ -1083,6 +1092,7 @@ class RandomContrastGPU(ImageOnlyTransform):
         contrast_range: tuple[float, float] = (0.75, 1.25),
         apply_to_channel: Sequence[int] = (0,),  # Apply to first channel by default
         retain_stats: bool = False,
+        preserve_range: bool = False,
         same_on_batch: bool = False,
         in_seg: float = 0.0,
         out_seg: float = 0.0,
@@ -1095,6 +1105,7 @@ class RandomContrastGPU(ImageOnlyTransform):
         self.contrast_range = contrast_range
         self.apply_to_channel = apply_to_channel
         self.retain_stats = retain_stats
+        self.preserve_range = preserve_range
         self.in_seg = in_seg
         self.out_seg = out_seg
         self.mix_in_out = mix_in_out
@@ -1126,6 +1137,9 @@ class RandomContrastGPU(ImageOnlyTransform):
                 mean = channel_data.mean(dim=tuple(range(1, channel_data.dim())), keepdim=True)
                 x = (channel_data - mean) * factor.view(-1, *([1] * (channel_data.dim() - 1))) + mean
 
+            if self.preserve_range:
+                spatial = tuple(range(1, channel_data.dim()))
+                x = torch.clamp(x, channel_data.amin(dim=spatial, keepdim=True), channel_data.amax(dim=spatial, keepdim=True))
             if self.retain_stats:
                 x = _restore_stats(x, stats)
             checked = _select_and_check(self, orig, x, seg_mask)
