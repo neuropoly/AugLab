@@ -81,13 +81,11 @@ class TestRandomBiasField(SmaugLabTestCase):
         largest_step = max(float(field.diff(dim=d).abs().max()) for d in range(3))
         self.assertLess(largest_step, 0.5)
 
-    def test_synthseg_and_domain_transfer_now_share_one_implementation(self):
-        from smauglab.transforms.gpu.domain_transfer import _random_bias_field3d
+    def test_synthseg_uses_the_shared_implementation(self):
         from smauglab.transforms.synthseg.functional import bias_field
 
         torch.manual_seed(7)
-        local = _random_bias_field3d((6, 6, 6), 0.7, 0.025, torch.device("cpu"), torch.float32)
-        self.assertEqual(tuple(local.shape), (6, 6, 6))
+        local = random_bias_field3d((6, 6, 6), 0.7, 0.025, torch.device("cpu"), torch.float32)[0, 0]
 
         torch.manual_seed(7)
         applied = bias_field(torch.ones(1, 1, 6, 6, 6), bias_field_std=0.7, bias_scale=0.025)

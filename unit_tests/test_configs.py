@@ -17,7 +17,6 @@ from unit_tests.helpers import (
     all_config_paths,
     first_output,
     gpu_config_paths,
-    requires_external_asset,
     seed_everything,
 )
 
@@ -44,10 +43,6 @@ class TestGpuConfigs(SmaugLabTestCase):
 
         for config_path in GPU_CONFIGS:
             with self.subTest(config=config_path.name):
-                skip_reason = requires_external_asset(config_path)
-                if skip_reason:
-                    self.skipTest(skip_reason)
-
                 volume, seg = self.tiny_volume(), self.tiny_seg()
                 pipeline = AugTransformsGPU(json_path=str(config_path))
                 image = first_output(pipeline(volume, seg))
@@ -67,10 +62,6 @@ class TestGpuConfigs(SmaugLabTestCase):
 
         for config_path in GPU_CONFIGS:
             with self.subTest(config=config_path.name):
-                skip_reason = requires_external_asset(config_path)
-                if skip_reason:
-                    self.skipTest(skip_reason)
-
                 first, second = run_once(config_path), run_once(config_path)
                 self.assertTrue(
                     torch.equal(first, second),

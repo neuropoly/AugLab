@@ -97,12 +97,6 @@ class TestEveryEntryIsConstructible(unittest.TestCase):
     def test_constructible_with_declared_defaults(self):
         for entry in registry.entries():
             with self.subTest(entry=f"{entry.backend.value}.{entry.name}"):
-                if entry.external_asset:
-                    from unit_tests.helpers import domain_bank_missing
-
-                    reason = domain_bank_missing(entry)
-                    if reason:
-                        self.skipTest(reason)
                 required = registry.required_params(entry)
                 if required:
                     # Legitimate: a few third-party CPU transforms take mandatory
