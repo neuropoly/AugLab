@@ -257,6 +257,12 @@ class _RandomConvBaseGPU(ImageOnlyTransform):
         absolute (bool): If True, take the absolute value of the result. Scharr only.
         sigma (float): Gaussian width. GaussianBlur and UnsharpMask only.
         unsharp_amount (float): Strength of the unsharp mask. UnsharpMask only.
+        sigma_min (float): Lower bound of the per-axis blur sigma, drawn from
+            `U(sigma_min, sigma)`. UnsharpMask only.
+        amount_min (float): Lower bound of the unsharp amount, drawn from
+            `U(amount_min, unsharp_amount)`. UnsharpMask only.
+        kernel_size (int | None): Width of the blur kernel; None sizes it for the largest
+            sigma the range allows, `2 * ceil(3 * sigma) + 1`. UnsharpMask only.
         kernel_sizes (list of int): Multi-scale kernel sizes to draw from. RandConv only.
         mix_prob (float): Probability of blending the result back with the original.
         retain_stats (bool): If True, restore the original mean and std afterwards.
@@ -282,6 +288,9 @@ class _RandomConvBaseGPU(ImageOnlyTransform):
         sigma: float = 1.0,
         unsharp_amount: float = 1.0,
         kernel_sizes: Sequence[int] = (1, 3, 5, 7),
+        sigma_min: float = 0.0,
+        amount_min: float = 0.0,
+        kernel_size: int | None = 3,
         mix_prob: float = 0.0,
         p: float = 1.0,
         p_batch: float = 1.0,
@@ -301,6 +310,9 @@ class _RandomConvBaseGPU(ImageOnlyTransform):
         self.mix_in_out = mix_in_out
         self.unsharp_amount = unsharp_amount
         self.kernel_sizes = kernel_sizes
+        self.sigma_min = sigma_min
+        self.amount_min = amount_min
+        self.kernel_size = kernel_size if kernel_size is not None else 2 * math.ceil(3 * sigma) + 1
         self.mix_prob = mix_prob
 
     def get_kernel(self, device: torch.device) -> Union[Tensor, list[Tensor]]:
@@ -318,9 +330,10 @@ class _RandomConvBaseGPU(ImageOnlyTransform):
             kernel = gaussian_kernel3d(kernel_size, sigma, torch.float32, device)
         elif self.kernel_type == "UnsharpMask":
             # For unsharp masking we use a Gaussian blur kernel; amount is applied in apply_transform.
-            sigma = torch.rand(3, device=device) * self.sigma
-            kernel_size = 3
-            kernel = gaussian_kernel3d(kernel_size, sigma, torch.float32, device)
+            # With the defaults (sigma_min 0, kernel_size 3) this is the old `rand * sigma`
+            # on a 3-wide kernel exactly: `* (sigma - 0.0) + 0.0` is exact in IEEE-754.
+            sigma = torch.rand(3, device=device) * (self.sigma - self.sigma_min) + self.sigma_min
+            kernel = gaussian_kernel3d(self.kernel_size, sigma, torch.float32, device)
         elif self.kernel_type == "RandConv":
             # choose random odd kernel size e.g. [1,3,5,7]
             k = int(shared_choice(self.kernel_sizes))  # define kernel_sizes in __init__
@@ -384,11 +397,14 @@ class _RandomConvBaseGPU(ImageOnlyTransform):
                 if self.same_on_batch:
                     assert isinstance(kernel, Tensor)
                     blurred = apply_convolution(channel_data, kernel, dim=3)
-                    unsharp_amount = torch.rand(1, device=input.device) * self.unsharp_amount
+                    unsharp_amount = torch.rand(1, device=input.device) * (self.unsharp_amount - self.amount_min) + self.amount_min
                 else:
                     blurred = apply_convolution_per_sample(channel_data, self._per_sample_kernels(channel_data.shape[0], input.device))
                     amount_shape = [channel_data.shape[0]] + [1] * (channel_data.dim() - 1)
-                    unsharp_amount = torch.rand(channel_data.shape[0], device=input.device).view(amount_shape) * self.unsharp_amount
+                    unsharp_amount = (
+                        torch.rand(channel_data.shape[0], device=input.device).view(amount_shape) * (self.unsharp_amount - self.amount_min)
+                        + self.amount_min
+                    )
                 mask = channel_data - blurred
                 x = channel_data + unsharp_amount * mask
             elif self.kernel_type == "Scharr":
@@ -557,12 +573,22 @@ class RandomGaussianBlurGPU(_RandomConvBaseGPU):
     group=AugType.TA,
 )
 class RandomUnsharpMaskGPU(_RandomConvBaseGPU):
-    """Unsharp masking: sharpen by subtracting a blurred copy."""
+    """Unsharp masking: sharpen by subtracting a blurred copy.
+
+    The blur sigma is drawn per axis from `U(sigma_min, sigma)` and the amount from
+    `U(amount_min, unsharp_amount)`. The defaults (`sigma_min=0`, `amount_min=0`,
+    `kernel_size=3`) are the historical draws, and they make a weak transform: a 3-wide
+    kernel truncates any sigma above about 0.5, and a sigma near 0 blurs nothing, so the
+    unsharp mask is close to zero. `kernel_size=None` sizes the kernel for `sigma`.
+    """
 
     def __init__(
         self,
         sigma: float = 1.0,
         unsharp_amount: float = 1.5,
+        sigma_min: float = 0.0,
+        amount_min: float = 0.0,
+        kernel_size: int | None = 3,
         mix_prob: float = 0.0,
         apply_to_channel: Sequence[int] = (0,),
         same_on_batch: bool = False,
@@ -574,10 +600,19 @@ class RandomUnsharpMaskGPU(_RandomConvBaseGPU):
         p_batch: float = 1.0,
         keepdim: bool = True,
     ) -> None:
+        if not 0.0 <= sigma_min <= sigma:
+            raise ValueError(f"need 0 <= sigma_min <= sigma, got sigma_min={sigma_min}, sigma={sigma}")
+        if not 0.0 <= amount_min <= unsharp_amount:
+            raise ValueError(f"need 0 <= amount_min <= unsharp_amount, got {amount_min} and {unsharp_amount}")
+        if kernel_size is not None and (kernel_size < 1 or kernel_size % 2 == 0):
+            raise ValueError(f"kernel_size must be a positive odd integer or None, got {kernel_size}")
         super().__init__(
             kernel_type="UnsharpMask",
             sigma=sigma,
             unsharp_amount=unsharp_amount,
+            sigma_min=sigma_min,
+            amount_min=amount_min,
+            kernel_size=kernel_size,
             mix_prob=mix_prob,
             apply_to_channel=apply_to_channel,
             same_on_batch=same_on_batch,
@@ -1161,7 +1196,7 @@ class _RandomFunctionBaseGPU(ImageOnlyTransform):
             x = (x - x_min) / (x_max - x_min + 0.00001)
 
             # Apply function
-            x = self.func(x)
+            x = self._apply_function(x)
 
             if self.retain_stats:
                 x = _restore_stats(x, stats)
@@ -1171,6 +1206,27 @@ class _RandomFunctionBaseGPU(ImageOnlyTransform):
             input[:, c] = checked
 
         return input
+
+    def _apply_function(self, x: Tensor) -> Tensor:
+        """`func` on the `[0, 1]`-normalised `[N, ...spatial]` channel. Leaves with a strength range override this."""
+        return self.func(x)
+
+
+def _uniform_like(bounds: Sequence[float], x: Tensor, same_on_batch: bool) -> Tensor:
+    """`U(lo, hi)`, one draw per sample (one for the batch with `same_on_batch`), shaped to broadcast over `x`."""
+    lo, hi = float(bounds[0]), float(bounds[1])
+    n = 1 if same_on_batch else x.shape[0]
+    u = torch.rand(n, device=x.device, dtype=x.dtype) * (hi - lo) + lo
+    return u.view(-1, *([1] * (x.dim() - 1)))
+
+
+def _check_range(name: str, bounds: Sequence[float] | None, lowest: float | None = None) -> None:
+    if bounds is None:
+        return
+    if len(bounds) != 2 or float(bounds[0]) > float(bounds[1]):
+        raise ValueError(f"{name} must be [lo, hi] with lo <= hi, got {bounds}")
+    if lowest is not None and float(bounds[0]) < lowest:
+        raise ValueError(f"{name} must start at >= {lowest}, got {bounds}")
 
 
 # One class per elementwise function. `func` was a callable parameter, which no JSON
@@ -1228,9 +1284,49 @@ class _RandomNamedFunctionGPU(_RandomFunctionBaseGPU):
     group=AugType.TA,
 )
 class RandomLog1pGPU(_RandomNamedFunctionGPU):
-    """Apply log(1 + x)."""
+    """Apply log(1 + x), or log(1 + k*x) with k drawn from `scale_range`.
+
+    The transform min-max scales each sample to `[0, 1]`, applies the function and, with
+    `retain_stats`, restores mean and std, so only the function's curvature on `[0, 1]`
+    survives. For the fixed function that is small: the share of the output variance a
+    linear map of the input cannot explain is 0.8% on a uniform input. Setting the
+    range draws a stronger member of the same family per sample; None keeps the fixed
+    function and draws nothing. `[1, 100]` reaches 15%.
+    """
 
     function = staticmethod(_log1p)
+
+    def __init__(
+        self,
+        scale_range: Sequence[float] | None = None,
+        apply_to_channel: Sequence[int] = (0,),
+        retain_stats: bool = False,
+        same_on_batch: bool = False,
+        in_seg: float = 0.0,
+        out_seg: float = 0.0,
+        mix_in_out: bool = False,
+        p: float = 1.0,
+        p_batch: float = 1.0,
+        keepdim: bool = True,
+    ) -> None:
+        _check_range("scale_range", scale_range, lowest=0.0)
+        super().__init__(
+            apply_to_channel=apply_to_channel,
+            retain_stats=retain_stats,
+            same_on_batch=same_on_batch,
+            in_seg=in_seg,
+            out_seg=out_seg,
+            mix_in_out=mix_in_out,
+            p=p,
+            p_batch=p_batch,
+            keepdim=keepdim,
+        )
+        self.scale_range = scale_range
+
+    def _apply_function(self, x: Tensor) -> Tensor:
+        if self.scale_range is None:
+            return self.func(x)
+        return torch.log(1 + _uniform_like(self.scale_range, x, self.same_on_batch) * x)
 
 
 @register(
@@ -1239,9 +1335,49 @@ class RandomLog1pGPU(_RandomNamedFunctionGPU):
     group=AugType.TA,
 )
 class RandomSqrtGPU(_RandomNamedFunctionGPU):
-    """Apply sqrt(x)."""
+    """Apply sqrt(x), or x**g with the exponent g drawn from `exponent_range`.
+
+    The transform min-max scales each sample to `[0, 1]`, applies the function and, with
+    `retain_stats`, restores mean and std, so only the function's curvature on `[0, 1]`
+    survives. For the fixed function that is small: the share of the output variance a
+    linear map of the input cannot explain is 4.0% on a uniform input. Setting the
+    range draws a stronger member of the same family per sample; None keeps the fixed
+    function and draws nothing. Smaller exponents are stronger.
+    """
 
     function = staticmethod(torch.sqrt)
+
+    def __init__(
+        self,
+        exponent_range: Sequence[float] | None = None,
+        apply_to_channel: Sequence[int] = (0,),
+        retain_stats: bool = False,
+        same_on_batch: bool = False,
+        in_seg: float = 0.0,
+        out_seg: float = 0.0,
+        mix_in_out: bool = False,
+        p: float = 1.0,
+        p_batch: float = 1.0,
+        keepdim: bool = True,
+    ) -> None:
+        _check_range("exponent_range", exponent_range, lowest=0.0)
+        super().__init__(
+            apply_to_channel=apply_to_channel,
+            retain_stats=retain_stats,
+            same_on_batch=same_on_batch,
+            in_seg=in_seg,
+            out_seg=out_seg,
+            mix_in_out=mix_in_out,
+            p=p,
+            p_batch=p_batch,
+            keepdim=keepdim,
+        )
+        self.exponent_range = exponent_range
+
+    def _apply_function(self, x: Tensor) -> Tensor:
+        if self.exponent_range is None:
+            return self.func(x)
+        return torch.pow(x, _uniform_like(self.exponent_range, x, self.same_on_batch))
 
 
 @register(
@@ -1250,9 +1386,54 @@ class RandomSqrtGPU(_RandomNamedFunctionGPU):
     group=AugType.TA,
 )
 class RandomSinGPU(_RandomNamedFunctionGPU):
-    """Apply sin(x)."""
+    """Apply sin(x), or sin(2*pi*f*x + phi) with f drawn from `frequency_range`.
+
+    The transform min-max scales each sample to `[0, 1]`, applies the function and, with
+    `retain_stats`, restores mean and std, so only the function's curvature on `[0, 1]`
+    survives. For the fixed function that is small: the share of the output variance a
+    linear map of the input cannot explain is 0.5% on a uniform input. Setting the
+    range draws a stronger member of the same family per sample; None keeps the fixed
+    function and draws nothing.
+    `f` counts cycles over the normalised range and the phase `phi` is drawn from
+    `U(0, 2*pi)`, so the map can rise, fall or fold: from about a quarter cycle up it is
+    non-monotonic, which swaps the order of some tissue intensities.
+    """
 
     function = staticmethod(torch.sin)
+
+    def __init__(
+        self,
+        frequency_range: Sequence[float] | None = None,
+        apply_to_channel: Sequence[int] = (0,),
+        retain_stats: bool = False,
+        same_on_batch: bool = False,
+        in_seg: float = 0.0,
+        out_seg: float = 0.0,
+        mix_in_out: bool = False,
+        p: float = 1.0,
+        p_batch: float = 1.0,
+        keepdim: bool = True,
+    ) -> None:
+        _check_range("frequency_range", frequency_range, lowest=0.0)
+        super().__init__(
+            apply_to_channel=apply_to_channel,
+            retain_stats=retain_stats,
+            same_on_batch=same_on_batch,
+            in_seg=in_seg,
+            out_seg=out_seg,
+            mix_in_out=mix_in_out,
+            p=p,
+            p_batch=p_batch,
+            keepdim=keepdim,
+        )
+        self.frequency_range = frequency_range
+
+    def _apply_function(self, x: Tensor) -> Tensor:
+        if self.frequency_range is None:
+            return self.func(x)
+        frequency = _uniform_like(self.frequency_range, x, self.same_on_batch)
+        phase = _uniform_like((0.0, 2 * math.pi), x, self.same_on_batch)
+        return torch.sin(2 * math.pi * frequency * x + phase)
 
 
 @register(
@@ -1261,9 +1442,54 @@ class RandomSinGPU(_RandomNamedFunctionGPU):
     group=AugType.TA,
 )
 class RandomExpGPU(_RandomNamedFunctionGPU):
-    """Apply exp(x)."""
+    """Apply exp(x), or exp(k*x) with the rate k drawn from `rate_range`.
+
+    The transform min-max scales each sample to `[0, 1]`, applies the function and, with
+    `retain_stats`, restores mean and std, so only the function's curvature on `[0, 1]`
+    survives. For the fixed function that is small: the share of the output variance a
+    linear map of the input cannot explain is 1.6% on a uniform input. Setting the
+    range draws a stronger member of the same family per sample; None keeps the fixed
+    function and draws nothing. `[1, 5]` reaches 19% at k=4.
+
+    Exp is convex at the bright end, so a large rate pushes the brightest voxels far out
+    once the stats are restored: measured on 128^3 spine patches (Dixon in-phase / CT),
+    the largest |z| is 5.6 / 8.4 at k=1, 9.3 / 11.8 at k=2.5 and 21 / 19 at k=5. Keep the
+    upper rate near 2.5 unless the outliers are wanted.
+    """
 
     function = staticmethod(torch.exp)
+
+    def __init__(
+        self,
+        rate_range: Sequence[float] | None = None,
+        apply_to_channel: Sequence[int] = (0,),
+        retain_stats: bool = False,
+        same_on_batch: bool = False,
+        in_seg: float = 0.0,
+        out_seg: float = 0.0,
+        mix_in_out: bool = False,
+        p: float = 1.0,
+        p_batch: float = 1.0,
+        keepdim: bool = True,
+    ) -> None:
+        _check_range("rate_range", rate_range, lowest=0.0)
+        super().__init__(
+            apply_to_channel=apply_to_channel,
+            retain_stats=retain_stats,
+            same_on_batch=same_on_batch,
+            in_seg=in_seg,
+            out_seg=out_seg,
+            mix_in_out=mix_in_out,
+            p=p,
+            p_batch=p_batch,
+            keepdim=keepdim,
+        )
+        self.rate_range = rate_range
+
+    def _apply_function(self, x: Tensor) -> Tensor:
+        if self.rate_range is None:
+            return self.func(x)
+        return torch.exp(_uniform_like(self.rate_range, x, self.same_on_batch) * x)
 
 
 @register(
@@ -1272,9 +1498,67 @@ class RandomExpGPU(_RandomNamedFunctionGPU):
     group=AugType.TA,
 )
 class RandomSigmoidGPU(_RandomNamedFunctionGPU):
-    """Apply the logistic sigmoid 1 / (1 + exp(-x))."""
+    """Apply the logistic sigmoid 1 / (1 + exp(-x)), or a windowing sigmoid.
+
+    With `slope_range` set, applies 1 / (1 + exp(-k * (x - c))) with the slope k drawn
+    from `slope_range` and the centre c at the sample's own q-quantile, q drawn from
+    `center_quantile_range` (default `[0.1, 0.9]`). A quantile rather than a fixed point
+    in `[0, 1]` because the min-max scaling is set by the extremes: on a patch with a
+    bright tail (CSF on water-weighted Dixon) the bulk of the tissue sits in the bottom
+    fifth of the range, and a fixed centre would saturate it.
+
+    The transform min-max scales each sample to `[0, 1]`, applies the function and, with
+    `retain_stats`, restores mean and std, so only the function's curvature on `[0, 1]`
+    survives. For the fixed function that is small: the share of the output variance a
+    linear map of the input cannot explain is 0.1% on a uniform input. Setting the
+    range draws a stronger member of the same family per sample; None keeps the fixed
+    function and draws nothing.
+    """
 
     function = staticmethod(_sigmoid)
+
+    def __init__(
+        self,
+        slope_range: Sequence[float] | None = None,
+        center_quantile_range: Sequence[float] = (0.1, 0.9),
+        apply_to_channel: Sequence[int] = (0,),
+        retain_stats: bool = False,
+        same_on_batch: bool = False,
+        in_seg: float = 0.0,
+        out_seg: float = 0.0,
+        mix_in_out: bool = False,
+        p: float = 1.0,
+        p_batch: float = 1.0,
+        keepdim: bool = True,
+    ) -> None:
+        _check_range("slope_range", slope_range, lowest=0.0)
+        _check_range("center_quantile_range", center_quantile_range, lowest=0.0)
+        if float(center_quantile_range[1]) > 1.0:
+            raise ValueError(f"center_quantile_range must lie in [0, 1], got {center_quantile_range}")
+        super().__init__(
+            apply_to_channel=apply_to_channel,
+            retain_stats=retain_stats,
+            same_on_batch=same_on_batch,
+            in_seg=in_seg,
+            out_seg=out_seg,
+            mix_in_out=mix_in_out,
+            p=p,
+            p_batch=p_batch,
+            keepdim=keepdim,
+        )
+        self.slope_range = slope_range
+        self.center_quantile_range = center_quantile_range
+
+    def _apply_function(self, x: Tensor) -> Tensor:
+        if self.slope_range is None:
+            return self.func(x)
+        slope = _uniform_like(self.slope_range, x, self.same_on_batch)
+        q = _uniform_like(self.center_quantile_range, x, self.same_on_batch).flatten().expand(x.shape[0])
+        flat = x.reshape(x.shape[0], -1)
+        n = flat.shape[1]
+        # `kthvalue`, not `torch.quantile`, which refuses inputs above 2**24 elements.
+        center = torch.stack([flat[b].kthvalue(int(float(q[b]) * (n - 1)) + 1).values for b in range(x.shape[0])])
+        return _sigmoid(slope * (x - center.view(-1, *([1] * (x.dim() - 1)))))
 
 
 ## Inverse transform
