@@ -12,9 +12,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
-import os
 import unittest
-from pathlib import Path
 
 import torch
 
@@ -25,7 +23,6 @@ TRANSFORM_MODULES = [
     "smauglab.transforms.gpu.contrast",
     "smauglab.transforms.gpu.spatial",
     "smauglab.transforms.gpu.fromSeg",
-    "smauglab.transforms.gpu.domain_transfer",
     "smauglab.transforms.gpu.palette.transform",
 ]
 
@@ -63,39 +60,13 @@ def discover_transforms():
 DISCOVERED = discover_transforms()
 
 
-def build_kwargs(cls, signature) -> dict:
+def build_kwargs(signature) -> dict:
     """Construction arguments that make a transform actually do something.
 
     `p` is forced to 1.0 because most transforms default to a low probability
     and would otherwise pass through untouched most of the time.
     """
-    kwargs = {"p": 1.0} if "p" in signature.parameters else {}
-    if cls.__name__ == "RandomDomainTransferGPU":
-        # Every parameter has a default, but the constructor still rejects a
-        # missing source_label unless it is told to draw from every domain pair.
-        kwargs["any_source"] = True
-    return kwargs
-
-
-def skip_reason(cls) -> str | None:
-    """Some transforms depend on assets that do not exist on a fresh checkout.
-
-    Which ones is registry data now (`external_asset` names the environment variable
-    that points at the artefact), rather than a hardcoded class name here -- so a
-    second such transform is covered the moment it is registered.
-    """
-    from smauglab import registry
-
-    try:
-        entry = registry.get(cls.__name__)
-    except registry.UnknownAugmentationError:
-        return None
-    if not entry.external_asset:
-        return None
-    location = os.environ.get(entry.external_asset)
-    if location and Path(location).is_file():
-        return None
-    return f"{cls.__name__} needs ${entry.external_asset} to point at its data"
+    return {"p": 1.0} if "p" in signature.parameters else {}
 
 
 class TestTransformDiscovery(unittest.TestCase):
@@ -111,7 +82,7 @@ class TestTransformsRunStandalone(SmaugLabTestCase):
     def _pipeline(self, cls, signature):
         """Drive a single transform the way AugTransformsGPU does."""
         return AugmentationSequentialCustom(
-            cls(**build_kwargs(cls, signature)),
+            cls(**build_kwargs(signature)),
             data_keys=["input", "mask"],
             same_on_batch=True,
         )
@@ -119,10 +90,6 @@ class TestTransformsRunStandalone(SmaugLabTestCase):
     def test_transform_runs_on_a_tiny_volume(self):
         for label, cls, signature in DISCOVERED:
             with self.subTest(transform=label):
-                reason = skip_reason(cls)
-                if reason:
-                    self.skipTest(reason)
-
                 volume, seg = self.tiny_volume(), self.tiny_seg()
                 image = first_output(self._pipeline(cls, signature)(volume, seg))
 
@@ -137,10 +104,6 @@ class TestTransformsRunStandalone(SmaugLabTestCase):
         """
         for label, cls, signature in DISCOVERED:
             with self.subTest(transform=label):
-                reason = skip_reason(cls)
-                if reason:
-                    self.skipTest(reason)
-
                 result = self._pipeline(cls, signature)(self.tiny_volume(), self.tiny_seg())
                 if not isinstance(result, (list, tuple)) or len(result) < 2:
                     self.skipTest(f"{cls.__name__} does not return a mask")
@@ -187,7 +150,7 @@ class TestTransformsOnADegeneratePatch(SmaugLabTestCase):
 
     def _pipeline(self, cls, signature):
         return AugmentationSequentialCustom(
-            cls(**build_kwargs(cls, signature)),
+            cls(**build_kwargs(signature)),
             data_keys=["input", "mask"],
             same_on_batch=True,
         )
@@ -196,10 +159,6 @@ class TestTransformsOnADegeneratePatch(SmaugLabTestCase):
         for label, cls, signature in DISCOVERED:
             for case, volume, seg in self._cases():
                 with self.subTest(transform=label, case=case):
-                    reason = skip_reason(cls)
-                    if reason:
-                        self.skipTest(reason)
-
                     image = first_output(self._pipeline(cls, signature)(volume.clone(), seg.clone()))
 
                     self.assertEqual(image.shape, volume.shape, f"{cls.__name__} changed the shape on {case}")

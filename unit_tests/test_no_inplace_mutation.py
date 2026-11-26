@@ -19,22 +19,16 @@ import torch
 
 from smauglab.transforms.gpu.base import AugmentationSequentialCustom
 from unit_tests.helpers import SmaugLabTestCase
-from unit_tests.test_transforms_gpu import DISCOVERED, build_kwargs, skip_reason
+from unit_tests.test_transforms_gpu import DISCOVERED, build_kwargs
 
 
 class TestTransformsDoNotMutateTheirInput(SmaugLabTestCase):
     def test_the_callers_tensor_is_untouched(self):
         for label, cls, signature in DISCOVERED:
             with self.subTest(transform=label):
-                reason = skip_reason(cls)
-                if reason:
-                    self.skipTest(reason)
-
                 image, seg = self.tiny_volume(), self.tiny_seg()
                 reference = image.clone()
-                pipeline = AugmentationSequentialCustom(
-                    cls(**build_kwargs(cls, signature)), data_keys=["input", "mask"], same_on_batch=True
-                )
+                pipeline = AugmentationSequentialCustom(cls(**build_kwargs(signature)), data_keys=["input", "mask"], same_on_batch=True)
 
                 pipeline(image, seg)
 
@@ -46,15 +40,9 @@ class TestTransformsDoNotMutateTheirInput(SmaugLabTestCase):
     def test_the_callers_mask_is_untouched(self):
         for label, cls, signature in DISCOVERED:
             with self.subTest(transform=label):
-                reason = skip_reason(cls)
-                if reason:
-                    self.skipTest(reason)
-
                 image, seg = self.tiny_volume(), self.tiny_seg()
                 reference = seg.clone()
-                pipeline = AugmentationSequentialCustom(
-                    cls(**build_kwargs(cls, signature)), data_keys=["input", "mask"], same_on_batch=True
-                )
+                pipeline = AugmentationSequentialCustom(cls(**build_kwargs(signature)), data_keys=["input", "mask"], same_on_batch=True)
 
                 pipeline(image, seg)
 

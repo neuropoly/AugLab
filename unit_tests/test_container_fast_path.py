@@ -32,15 +32,13 @@ from smauglab.transforms.gpu.base import (
     _leaves_masks_untouched,
     autocast_active,
 )
-from unit_tests.helpers import SmaugLabTestCase, domain_bank_missing
+from unit_tests.helpers import SmaugLabTestCase
 
 SHAPE = (3, 1, 12, 14, 16)
-EXTRA_KWARGS = {"RandomDomainTransferGPU": {"any_source": True}}
 
 
 def build(entry):
     kwargs = dict(entry.smoke_kwargs)
-    kwargs.update(EXTRA_KWARGS.get(entry.name, {}))
     if "p" in inspect.signature(entry.cls.__init__).parameters:
         kwargs["p"] = 1.0
     return entry.cls(**kwargs)
@@ -98,9 +96,6 @@ class TestLeafFastPathMatchesKornia(SmaugLabTestCase):
     def test_every_registered_transform_agrees_on_both_routes(self):
         image, seg = fixtures()
         for entry in sorted(registry.entries(Backend.GPU), key=lambda e: e.name):
-            reason = domain_bank_missing(entry)
-            if reason:
-                continue
             for label, batch_prob in SELECTIONS.items():
                 with self.subTest(transform=entry.name, selection=label):
                     torch.manual_seed(4321)
@@ -125,8 +120,6 @@ class TestLeafFastPathMatchesKornia(SmaugLabTestCase):
     def test_the_transform_matrix_is_the_one_kornia_would_have_stored(self):
         image, seg = fixtures()
         for entry in sorted(registry.entries(Backend.GPU), key=lambda e: e.name):
-            if domain_bank_missing(entry):
-                continue
             with self.subTest(transform=entry.name):
                 torch.manual_seed(4321)
                 module = build(entry)
@@ -172,8 +165,6 @@ class TestMaskShortCircuit(SmaugLabTestCase):
     def test_it_matches_kornia_for_every_image_only_transform(self):
         image, seg = fixtures()
         for entry in sorted(registry.entries(Backend.GPU), key=lambda e: e.name):
-            if domain_bank_missing(entry):
-                continue
             for label, batch_prob in SELECTIONS.items():
                 torch.manual_seed(4321)
                 module = build(entry)

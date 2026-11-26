@@ -158,29 +158,6 @@
             "refinement_partitioners": null,
             "same_on_batch": false
         },
-        "RandomDomainTransferGPU": {
-            "any_source": false,
-            "apply_to_channel": null,
-            "bank_path": null,
-            "bias_field_std": 0.0,
-            "bias_scale": 0.03,
-            "blend_concentration": 1.0,
-            "blend_targets": 1,
-            "include_self": true,
-            "keepdim": true,
-            "p": 0.2,
-            "p_batch": 1.0,
-            "p_class_mix": 0.0,
-            "p_spatial_mix": 0.0,
-            "pct": 1.0,
-            "same_on_batch": false,
-            "sigma": 2.0,
-            "source_label": null,
-            "spatial_mix_gain": 3.0,
-            "spatial_mix_scale": 0.03,
-            "targets": null,
-            "zscore_io": "auto"
-        },
         "RandomInverseGPU": {
             "apply_to_channel": [
                 0

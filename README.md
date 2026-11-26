@@ -243,7 +243,6 @@ column -- see "Run Monai training with SmaugLab augmentations" above. Regenerate
 | redistribute_seg | TA | `RandomRedistributeSegGPU` | `RedistributeTransform` |
 | palette | TA | `RandomPaletteGPU` | — |
 | palette_composed | TA | `PaletteSynthesisGPU` | — |
-| domain_transfer | TA | `RandomDomainTransferGPU` | — |
 | synthseg | TA | `RandomSynthSegGPU` | — |
 | artifact | TA | — | `ArtifactTransform` |
 | spatial_custom | GEO | — | `SpatialCustomTransform` |

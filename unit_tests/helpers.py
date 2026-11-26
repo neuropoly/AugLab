@@ -7,7 +7,6 @@ enough to gate every pull request. No GPU and no image data on disk required.
 from __future__ import annotations
 
 import importlib.resources
-import json
 import random
 import unittest
 from pathlib import Path
@@ -106,45 +105,3 @@ def gpu_config_paths() -> list[Path]:
     if extra.is_file():
         paths.append(extra)
     return sorted(paths)
-
-
-def requires_external_asset(config_path: Path) -> str | None:
-    """Return a skip reason if a config needs an asset that is not on this machine.
-
-    RandomDomainTransferGPU loads a precomputed histogram bank that is far too large
-    to ship in the wheel; its location comes from an environment variable. Rather than
-    fail CI, skip those configs and say why.
-    """
-    import os
-
-    from smauglab.transforms.gpu.domain_transfer import BANK_PATH_ENV_VAR
-
-    params = json.loads(config_path.read_text())
-    params = params.get("GPU", params)
-    if not isinstance(params, dict):
-        return None
-    uses_transfer = params.get("RandomDomainTransferGPU") or params.get("DomainTransferTransform")
-    if not uses_transfer:
-        return None
-    configured = uses_transfer.get("bank_path") if isinstance(uses_transfer, dict) else None
-    bank = configured or os.environ.get(BANK_PATH_ENV_VAR)
-    if not bank or not Path(bank).is_file():
-        return f"domain transfer bank not available (set ${BANK_PATH_ENV_VAR})"
-    return None
-
-
-def domain_bank_missing(entry) -> str | None:
-    """Skip reason if a registry entry needs an external artefact that is absent.
-
-    `external_asset` names the environment variable that points at it. The
-    domain-transfer LUT bank is the only such artefact: hundreds of megabytes, built
-    offline, deliberately not shipped in the wheel.
-    """
-    import os
-
-    if not getattr(entry, "external_asset", None):
-        return None
-    location = os.environ.get(entry.external_asset)
-    if location and Path(location).is_file():
-        return None
-    return f"{entry.name} needs ${entry.external_asset} to point at its data"

@@ -122,7 +122,6 @@ class AugId(str, Enum):
     # form is configured by which partitioning blocks it is given, so it has its own
     # row in the matrix rather than overwriting RandomPaletteGPU's cell.
     PALETTE_COMPOSED = "palette_composed"
-    DOMAIN_TRANSFER = "domain_transfer"
     SYNTHSEG = "synthseg"
     ARTIFACT = "artifact"
     SPATIAL_CUSTOM = "spatial_custom"
@@ -203,7 +202,6 @@ PIPELINE_ORDER: Mapping[Backend, tuple[str, ...]] = MappingProxyType(
             "RandomSynthSegGPU",  # SynthSeg
             "RandomPaletteGPU",  # RandomPALETTETransform
             "PaletteSynthesisGPU",  # same slot: it is the same augmentation, composed
-            "RandomDomainTransferGPU",  # DomainTransferTransform
             "RandomInverseGPU",  # InverseTransform
             "RandomHistogramEqualizationGPU",  # HistogramEqualizationTransform
             "RandomRedistributeSegGPU",  # RedistributeSegTransform
@@ -297,9 +295,6 @@ class AugEntry:
     # AUG2GROUP calls it GE but the random-order builder has always run it in sequence, and
     # the group is used downstream for filtering, so the two meanings are kept apart.
     force_sequential: bool = False
-    # Name of an env var pointing at a large artefact the transform needs but the
-    # wheel does not ship. Tests skip rather than fail when it is unset.
-    external_asset: str | None = None
     # Parameters the builder must pass through a callable first. batchgeneratorsv2 ranges
     # are the reason: `BGContrast((0.7, 1.5))` samples 50/50 from [lo, 1] and
     # [max(lo, 1), hi] where the bare tuple would be sampled uniformly -- a different
@@ -393,7 +388,6 @@ def register(
     context_params: tuple[str, ...] = (),
     wrap_random: bool = True,
     force_sequential: bool = False,
-    external_asset: str | None = None,
     smoke_kwargs: Mapping[str, Any] | None = None,
     param_adapters: Mapping[str, Callable[[Any], Any]] | None = None,
     summary: str = "",
@@ -412,7 +406,6 @@ def register(
                 context_params=context_params,
                 wrap_random=wrap_random,
                 force_sequential=force_sequential,
-                external_asset=external_asset,
                 smoke_kwargs=MappingProxyType(dict(smoke_kwargs or {})),
                 param_adapters=MappingProxyType(dict(param_adapters or {})),
                 summary=summary or _first_docstring_line(cls),

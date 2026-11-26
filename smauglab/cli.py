@@ -167,8 +167,6 @@ def cmd_show(args) -> int:
         print(f"  {entry.summary}")
     if entry.forwards_to is not None:
         print(f"  forwards extra parameters to {entry.forwards_to.__name__}")
-    if entry.external_asset:
-        print(f"  needs an external asset; set ${entry.external_asset}")
     print(f"\n  module: {entry.cls.__module__}")
 
     params = registry.accepted_params(entry)
