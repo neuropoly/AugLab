@@ -12,8 +12,19 @@ from __future__ import annotations
 import torch
 import torch.nn.functional as F
 
-from smauglab.transforms.gpu.base import AugmentationSequentialCustom
-from smauglab.transforms.gpu.context import RandomFOVExtensionGPU, _dilate, _em_regions, _extend_regions, _shift, _touched_faces
+from smauglab.transforms.gpu.base import AugmentationSequentialCustom, segmentation_from
+from smauglab.transforms.gpu.context import (
+    _SEAM,
+    RandomFOVExtensionGPU,
+    _dilate,
+    _em_regions,
+    _extend_regions,
+    _render,
+    _shift,
+    _touched_faces,
+)
+from smauglab.transforms.gpu.contrast import _foreground
+from smauglab.transforms.synthseg.functional import random_svf_field, warp_volume
 from unit_tests.helpers import SmaugLabTestCase
 
 SHAPE = (3, 1, 28, 24, 20)  # non-cubic on purpose
@@ -355,3 +366,59 @@ class TestHelpers(SmaugLabTestCase):
         volume = torch.ones(1, 1, 4, 4, 4)
         self.assertTrue(bool((_shift(volume, [[0, 4, 0]], 0.0) == 0).all()))
         self.assertTrue(bool(torch.equal(_shift(volume, [[0, 0, 0]], 0.0), volume)))
+
+
+def _v2_reference(transform, input, params):
+    """`RandomFOVExtensionGPU.apply_transform` as of 5a8b044, before `_em_atlas`/`_deform` were extracted. Frozen."""
+    with torch.no_grad(), torch.autocast(device_type=input.device.type, enabled=False):
+        image = input.float()
+        n = image.shape[0]
+        d, h, w = image.shape[2:]
+        offsets = transform._offsets(params, (d, h, w), image.device)
+        padding = (image == transform.pad_value).all(dim=1, keepdim=True)
+        seg = segmentation_from(params)
+        labelled = torch.zeros_like(padding) if seg is None else _foreground(seg, dim=1).unsqueeze(1)
+        sources = ~(_dilate(labelled, transform.margin) | _dilate(padding, _SEAM))
+        k_max = transform.regions[1]
+        n_regions = params["regions"].to(image.device).long()
+        em = _em_regions(image[:, 0].flatten(1), sources.flatten(1).float(), n_regions, k_max).view_as(padding)
+        votes = (em == torch.arange(k_max, device=em.device).view(1, -1, 1, 1, 1)).float() * sources
+        atlas = F.avg_pool3d(votes, 3, stride=1, padding=1).argmax(dim=1, keepdim=True)
+        atlas = torch.where(sources, atlas, -1)
+        displacement = random_svf_field(n, (d, h, w), image.device)
+        deformed = warp_volume((atlas + 1).float(), displacement=displacement, interp="nearest").round().long() - 1
+        shifted = _shift(image, offsets, transform.pad_value)
+        fill = _shift(padding, offsets, True)
+        seed = torch.where(fill, -1, _shift(atlas, offsets, -1))
+        layout = _extend_regions(deformed, seed, fill, transform.layers)
+        rendered = _render(image, atlas, layout, k_max)
+        has_sources = sources.flatten(1).any(dim=1).view(n, 1, 1, 1, 1)
+        rendered = torch.where(has_sources, rendered, transform.pad_value)
+        out = torch.where(fill, rendered, shifted)
+    return out.to(input.dtype)
+
+
+class TestRefactorIsBitIdentical(SmaugLabTestCase):
+    """Extracting `_em_atlas` and `_deform` for `RandomFOVWindowGPU` changed no output and no random draw."""
+
+    def test_matches_the_frozen_body(self):
+        two_channel = slab((2, 2, 28, 24, 20))
+        two_channel[0][:, 1] = two_channel[0][:, 0] * 0.5
+        fixtures = {"slab": slab(), "through": through(), "bands": bands(2, (1.0, 4.0, 7.0)), "two_channel": two_channel}
+        for name, (image, seg) in fixtures.items():
+            for shift in (0.0, 0.5, 1.0):
+                for with_seg in (True, False):
+                    for seed in range(6):
+                        with self.subTest(fixture=name, shift=shift, seg=with_seg, seed=seed):
+                            transform = RandomFOVExtensionGPU(shift=shift, regions=(2, 5), p=1.0)
+                            torch.manual_seed(seed)
+                            params = transform.generate_parameters(image.shape)
+                            if with_seg:
+                                params["seg"] = seg
+                            state = torch.get_rng_state()
+                            ref = _v2_reference(transform, image, params)
+                            ref_state = torch.get_rng_state()
+                            torch.set_rng_state(state)
+                            out = transform.apply_transform(image, params, transform.flags)
+                            self.assertTrue(bool(torch.equal(out, ref)))
+                            self.assertTrue(bool(torch.equal(torch.get_rng_state(), ref_state)))

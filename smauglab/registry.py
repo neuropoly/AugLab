@@ -97,6 +97,7 @@ class AugId(str, Enum):
     CROP = "crop"
     SPATIAL = "spatial"  # nnU-Net's own SpatialTransform
     FOV_EXTENSION = "fov_extension"
+    FOV_WINDOW = "fov_window"
     # -- general enhancement
     GAUSSIAN_NOISE = "gaussian_noise"
     GAUSSIAN_BLUR = "gaussian_blur"
@@ -205,6 +206,8 @@ PIPELINE_ORDER: Mapping[Backend, tuple[str, ...]] = MappingProxyType(
             # fill) and before everything that rewrites intensities, so the synthesised
             # background is augmented exactly like the anatomy around it.
             "RandomFOVExtensionGPU",
+            # Same slot, same reason; its window is placed by the dataloader before patching.
+            "RandomFOVWindowGPU",
             "RandomSynthSegGPU",  # SynthSeg
             "RandomPaletteGPU",  # RandomPALETTETransform
             "PaletteSynthesisGPU",  # same slot: it is the same augmentation, composed

@@ -49,6 +49,24 @@
             "shift": 0.5,
             "spare_label_faces": true
         },
+        "RandomFOVWindowGPU": {
+            "border_p": 0.0,
+            "cells": [
+                4,
+                16
+            ],
+            "extend": 0.75,
+            "fill": "em",
+            "keepdim": true,
+            "layers": 6,
+            "margin": 4,
+            "p": 0.5,
+            "p_batch": 1.0,
+            "regions": [
+                3,
+                10
+            ]
+        },
         "RandomSynthSegGPU": {
             "apply_bias_field": true,
             "apply_intensity_augmentation": true,

@@ -86,7 +86,8 @@ class CachedBatch:
     `data`/`target` are post-CPU-pipeline and pre-GPU-augmentation, i.e. exactly what
     `train_step` receives. `target` is `[B, 1, *patch]`; if it ever arrives as a list
     the deep-supervision downsampling has not been deferred and the config's GPU
-    section is empty -- see `cache_train_batches`.
+    section is empty -- see `cache_train_batches`. `fov` is the rows a
+    `RandomFOVWindowGPU` dataloader moved, None without one.
     """
 
     index: int
@@ -94,6 +95,7 @@ class CachedBatch:
     target: torch.Tensor
     keys: list[str]
     bboxes: list[list[list[int]]] = field(default_factory=list)
+    fov: list[bool] | None = None
 
     def stems(self) -> list[str]:
         return [f"{key}_b{self.index}s{s}" for s, key in enumerate(self.keys)]
@@ -192,6 +194,7 @@ def cache_train_batches(spec: TrainerSpec, base_config_path: Path | str, *, n_ba
                 target=target.detach().cpu().clone(),
                 keys=list(raw["keys"]),
                 bboxes=boxes[seen:],
+                fov=raw["fov"].tolist() if "fov" in raw else None,
             )
         )
         print(f"  batch {index}: {raw['keys']}", flush=True)
@@ -240,6 +243,11 @@ def apply_gpu_config(
 
     data = batch.data.clone().to(device, non_blocking=True)
     target = batch.target.clone().to(device, non_blocking=True)
+    # As `train_step` does. A batch cached without the window config has no rows; the
+    # transform then draws its own and warns, and no window was moved.
+    window = getattr(trainer, "_fov_window", None)
+    if window is not None and batch.fov is not None:
+        window.set_selection(batch.fov)
 
     recorder = record_applications(trainer.transforms) if trace is not None else contextlib.nullcontext([])
     with autocast(device.type, enabled=True) if device.type == "cuda" else _nullcontext():

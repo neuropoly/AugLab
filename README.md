@@ -281,6 +281,70 @@ Things to know before using it:
 is the paper's Ours config (`c69b9872`) plus this transform at the defaults above, except
 `shift: 1.0`. That is the best arm of the Dataset803 screen. Nothing else changes.
 
+### Field of view beyond the case, placed before patching
+
+`RandomFOVExtensionGPU` moves the scan inside a patch that is already cut, so the voxels it
+vacates get synthetic tissue even where the training case has real anatomy just outside
+the patch. A label that runs out of the window can then end against that tissue.
+`RandomFOVWindowGPU` keeps the real data. It works in two halves, from one config entry:
+
+1. **Before patching**, `nnUNetTrainerDAExtGPU` swaps nnU-Net's training dataloader for
+   `smauglab.trainers.fov_window.FOVWindowDataLoader`. For each sample, with probability
+   `p`, nnU-Net draws its crop from a case padded by `extend` of the patch on every face
+   that no label comes within `margin` voxels of. It does this with its own sampler,
+   foreground oversampling included. A random window therefore keeps at least
+   `1 - extend` of the patch inside the case along each axis, and the oversampled window
+   stays centred on a label. The patch holds real data wherever the case has it, and
+   nnU-Net's 0 padding where the window leaves the case. A face that a label runs through
+   is never extended. This is nnU-Net's own `pad_sides`, applied per sample and per face.
+2. **After patching**, the transform fills, on exactly the samples the loader moved:
+   * the padding, meaning every channel exactly 0;
+   * with probability `border_p`, the case's own black border: the most frequent
+     intensity, if it covers at least 5% of the scan and lies at or below its median;
+   * the one-voxel interpolated edge of either.
+
+   It never fills a voxel within `margin` of a label. The fill comes from `fill`, drawn
+   per sample when it is a list:
+   * `em` is `RandomFOVExtensionGPU`'s fill without the shift;
+   * `noise` is correlated noise with the scan background's mean and standard deviation;
+   * `voronoi` is 4 to 16 (`cells`) large, elongated, deformed Voronoi cells, each
+     rendered as one of the background's EM regions.
+
+| parameter | default | meaning |
+| --- | --- | --- |
+| `extend` | `0.75` | how far the window may leave the case, as a fraction of the patch, one value or one per axis, in [0, 1) |
+| `fill` | `"em"` | `em`, `noise`, `voronoi`, or a list of them to draw from per sample (repeat one to weight it) |
+| `regions` | `[3, 10]` | EM regions, for `em` and `voronoi` |
+| `cells` | `[4, 16]` | Voronoi cells |
+| `margin` | `4` | voxels around every label that are never filled; also how close a label must be to a case face to spare it |
+| `layers` | `6` | warped copies of the region map composited by `em` |
+| `border_p` | `0.0` | probability that a selected sample's black border is filled too |
+| `p` | `0.5` | probability that a sample's window is moved and filled |
+
+Things to know before using it:
+
+* **It needs this trainer.** An older copy of `nnUNetTrainerDAExt.py` in nnU-Net's package
+  never hands the transform the loader's rows. The transform then draws its own rows and
+  warns once (`fallbacks` counts the calls), and no window is moved. Re-copy the trainer
+  with `smauglab_add_nnunettrainer -t nnUNetTrainerDAExt --overwrite`.
+* **Unselected samples match the paper config in distribution only.** The loader's
+  selection draw shifts nnU-Net's random stream. At `p: 0` it draws nothing, and training
+  is the paper config bit for bit.
+* **The black border is found by intensity, not by nnU-Net's `seg == -1`.** In a
+  resampled MRI it is the z-scored raw 0, one exact value per case. On SpineGAN Dixon
+  (Datasets 803/806/807) it covers a median 35-41% of each case, but `-1` marks about
+  0.1% of it. It includes the masked air around the body. In CT the same rule selects the
+  clipped air.
+* **A label cut by the case face or the border keeps a dark rim** of `margin` voxels
+  instead of meeting synthetic tissue.
+* **The dataloader is a copy of nnU-Net 2.6.4's `get_dataloaders`** with the training
+  loader swapped. `unit_tests/test_fov_window_loader.py` pins the upstream sources it
+  relies on and fails when they change.
+
+`smauglab/configs/transform_params_one-sequence-to-segment-them-all-fov-window.json`
+(`31670630`) is the paper's Ours config (`c69b9872`) plus this transform with all three
+fills and `border_p: 0.5`. It has not been trained.
+
 ## Available augmentations
 
 Which augmentations exist, and which of the two backends implements each one. An empty
@@ -296,6 +360,7 @@ column -- see "Run Monai training with SmaugLab augmentations" above. Regenerate
 | crop | GEO | `RandomCropTransformGPU` | — |
 | spatial | GEO | — | `SpatialTransform` |
 | fov_extension | GEO | `RandomFOVExtensionGPU` | — |
+| fov_window | GEO | `RandomFOVWindowGPU` | — |
 | gaussian_noise | GE | `RandomGaussianNoiseGPU` | `GaussianNoiseTransform` |
 | gaussian_blur | GE | `RandomGaussianBlurGPU` | `GaussianBlurTransform` |
 | brightness | GE | `RandomBrightnessGPU` | `MultiplicativeBrightnessTransform` |
