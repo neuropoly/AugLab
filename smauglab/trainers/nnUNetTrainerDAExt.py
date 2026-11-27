@@ -39,6 +39,7 @@ from torch import autocast
 from smauglab import configs
 from smauglab.config import load_config
 from smauglab.registry import Backend
+from smauglab.trainers import fov_window
 from smauglab.trainers.utils import DownsampleSegForDSTransformCustom, nnunet_tail_transforms
 from smauglab.transforms.build import build_cpu_pipeline, build_gpu_pipeline
 from smauglab.transforms.gpu.base import AugmentationSequentialCustom
@@ -174,8 +175,12 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
     """nnU-Net trainer driven entirely by a SmaugLab config.
 
     CPU-section augmentations run in the dataloader worker; GPU-section ones run on
-    the batch in `train_step`.
+    the batch in `train_step`. A `RandomFOVWindowGPU` in the GPU section also swaps in the
+    training dataloader that places its windows (`smauglab.trainers.fov_window`).
     """
+
+    #: The GPU pipeline's `RandomFOVWindowGPU`, whose rows the training loader selects.
+    _fov_window = None
 
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, device: torch.device = torch.device("cuda")):
         super().__init__(plans, configuration, fold, dataset_json, device)
@@ -200,6 +205,10 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
                 # spends each transform's `p` once for the whole batch.
                 same_on_batch=True if config.same_on_batch() else None,
             ).to(self.device)
+
+        self._fov_window = fov_window.find_fov_window(self.transforms)
+        if self._fov_window is not None:
+            print(f"FOV window: the training loader places it ({self._fov_window.loader_settings()}), fill {self._fov_window.fill}")
 
         print(f"Using SmaugLab transforms from: {json_path}")
         print(
@@ -315,9 +324,18 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
         self.inference_allowed_mirroring_axes = None
         return rotation_for_DA, do_dummy_2d_data_aug, initial_patch_size, mirror_axes
 
+    def get_dataloaders(self):
+        if self._fov_window is None:
+            return super().get_dataloaders()
+        return fov_window.get_dataloaders(self, self._fov_window.loader_settings())
+
     def train_step(self, batch: dict) -> dict:
         data = batch["data"]
         target = batch["target"]
+        if self._fov_window is not None:
+            if "fov" not in batch:
+                raise KeyError("batch['fov'] is missing: RandomFOVWindowGPU needs the rows FOVWindowDataLoader moved")
+            self._fov_window.set_selection(batch["fov"])
 
         data = data.to(self.device, non_blocking=True)
         # A tensor with GPU augmentations, a list without them. `get_training_transforms`

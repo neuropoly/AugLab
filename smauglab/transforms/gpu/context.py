@@ -6,12 +6,20 @@ flat zero slab beyond +-4 cm. On a whole-body axial scan it then finds vertebrae
 gluteals, fat and bowel: on NAKO VIBE most of its false-positive volume lies more than 5 cm
 from the spine. `RandomFOVExtensionGPU` shows it windows where the spine sits at the edge or
 is absent, surrounded by tissue that is labelled background.
+
+`RandomFOVWindowGPU` does the same without moving the scan inside the patch: the trainer's
+dataloader places the window in a case it treats as larger than it is
+(`smauglab.trainers.fov_window`), so the patch holds real data wherever the case has it,
+and this transform synthesises only what lies outside the case, and optionally the case's
+own black border.
 """
 
 from __future__ import annotations
 
 import math
+import warnings
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -20,9 +28,10 @@ from kornia.augmentation._3d.base import RigidAffineAugmentationBase3D
 from kornia.augmentation.random_generator.base import RandomGeneratorBase, UniformDistribution
 from kornia.augmentation.utils import _adapted_rsampling
 from torch import Tensor
+from torch.distributions import Bernoulli
 
 from smauglab.registry import AugId, AugType, Backend, register
-from smauglab.transforms.gpu.base import segmentation_from
+from smauglab.transforms.gpu.base import ImageOnlyTransform, segmentation_from
 from smauglab.transforms.gpu.contrast import _foreground
 from smauglab.transforms.synthseg.functional import _quadratic_log_likelihood_terms, gaussian_blur_3d, random_svf_field, warp_volume
 
@@ -37,6 +46,15 @@ _CLOSE_ITERS = 8  # max-pool steps that close what the warped layers missed
 _TEXTURE_SIGMA = 1.0  # correlation length of the within-region texture, in voxels
 _RENDER_SIGMA = 0.5  # SynthSeg's blur at the atlas resolution, in voxels
 _RENDER_BLUR_RANGE = 1.15  # SynthSeg's DynamicGaussianBlur jitter
+
+# `RandomFOVWindowGPU` only. The black border of a resampled MRI is the z-scored raw 0, one
+# exact value per case (a median 35-41% of every case of Datasets 803/806/807); after
+# SpatialTransform's linear interpolation it is still that value to within an ulp.
+_BORDER_TOL = 1e-3  # half-width of the black level, in normalised intensity
+_BORDER_MIN_FRACTION = 0.05  # of a row's non-padding voxels, for the level to count as a border
+_CELL_STRETCH = 2.0  # Voronoi distance weights per axis, log-uniform in [1/x, x]
+_NNUNET_PAD = 0.0  # what `crop_and_pad_nd` pads the image with; SpatialTransform's out-of-bounds too
+FILL_KINDS = ("em", "noise", "voronoi")
 
 
 def _dilate(mask: Tensor, radius: int) -> Tensor:
@@ -140,6 +158,22 @@ def _em_regions(x: Tensor, weight: Tensor, n_regions: Tensor, k_max: int, eps: f
     c = (x - shift).unsqueeze(2)
     logits = torch.cat([c * c, c, torch.ones_like(c)], dim=2) @ terms  # [N, V, K]
     return logits.masked_fill(~active.unsqueeze(1), -math.inf).argmax(dim=2)
+
+
+def _em_atlas(image: Tensor, sources: Tensor, n_regions: Tensor, k_max: int) -> Tensor:
+    """`[N, 1, D, H, W]` long region map: EM on channel 0 of the source voxels, then a 3x3x3 majority filter; -1 off sources."""
+    em = _em_regions(image[:, 0].flatten(1), sources.flatten(1).float(), n_regions, k_max).view_as(sources)
+    # Majority filter over the 3x3x3 neighbourhood, among source voxels only.
+    votes = (em == torch.arange(k_max, device=em.device).view(1, -1, 1, 1, 1)).float() * sources
+    atlas = F.avg_pool3d(votes, 3, stride=1, padding=1).argmax(dim=1, keepdim=True)
+    return torch.where(sources, atlas, -1)
+
+
+def _deform(regions: Tensor) -> Tensor:
+    """Warp a `[N, 1, D, H, W]` long region map by SynthSeg's random diffeomorphic field; what leaves the volume is -1."""
+    d, h, w = regions.shape[2:]
+    displacement = random_svf_field(regions.shape[0], (d, h, w), regions.device)
+    return warp_volume((regions + 1).float(), displacement=displacement, interp="nearest").round().long() - 1
 
 
 def _random_similarity(n: int, device: torch.device) -> Tensor:
@@ -381,15 +415,8 @@ class RandomFOVExtensionGPU(RigidAffineAugmentationBase3D):
             sources = ~(_dilate(labelled, self.margin) | _dilate(padding, _SEAM))
             k_max = self.regions[1]
             n_regions = params["regions"].to(image.device).long()
-            em = _em_regions(image[:, 0].flatten(1), sources.flatten(1).float(), n_regions, k_max).view_as(padding)
-
-            # Majority filter over the 3x3x3 neighbourhood, among source voxels only.
-            votes = (em == torch.arange(k_max, device=em.device).view(1, -1, 1, 1, 1)).float() * sources
-            atlas = F.avg_pool3d(votes, 3, stride=1, padding=1).argmax(dim=1, keepdim=True)
-            atlas = torch.where(sources, atlas, -1)
-
-            displacement = random_svf_field(n, (d, h, w), image.device)
-            deformed = warp_volume((atlas + 1).float(), displacement=displacement, interp="nearest").round().long() - 1
+            atlas = _em_atlas(image, sources, n_regions, k_max)
+            deformed = _deform(atlas)
 
             shifted = _shift(image, offsets, self.pad_value)
             fill = _shift(padding, offsets, True)
@@ -412,3 +439,323 @@ class RandomFOVExtensionGPU(RigidAffineAugmentationBase3D):
         self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None
     ) -> Tensor:
         return _shift(input, self._offsets(params, input.shape[2:], input.device), 0)
+
+
+@dataclass(frozen=True)
+class WindowSettings:
+    """What the dataloader needs from a `RandomFOVWindowGPU`: plain values, picklable into its workers."""
+
+    p: float
+    extend: tuple[float, float, float]
+    margin: int
+
+
+class _LoaderSelection:
+    """The per-row coin kornia draws from `_p_gen`, replaced by the rows the dataloader moved.
+
+    kornia and `_leaf_parameters` both ask `module._p_gen.sample((B,))` which rows to transform
+    when 0 < p < 1. Answering with the loader's rows keeps a moved window and its fill on the
+    same sample, and lets kornia slice the rows (and `SegmentationRef` the seg) as for any
+    other transform. Without a selection, as in a standalone render, it falls back to a
+    Bernoulli(p) draw and warns once.
+    """
+
+    def __init__(self, p: float) -> None:
+        self.p = p
+        self.pending: Tensor | None = None
+        self.fallbacks = 0
+        self._bernoulli = Bernoulli(torch.tensor(float(p)))
+
+    def sample(self, sample_shape: torch.Size) -> Tensor:
+        if self.pending is None:
+            self.fallbacks += 1
+            if self.fallbacks == 1:
+                warnings.warn(
+                    "RandomFOVWindowGPU got no row selection from the dataloader, so it draws its own and no window "
+                    "was moved. Expected outside nnUNetTrainerDAExtGPU (renders, tests); inside it, the trainer copy "
+                    "in nnunetv2 is stale.",
+                    stacklevel=2,
+                )
+            return self._bernoulli.sample(sample_shape)
+        rows, self.pending = self.pending, None
+        if tuple(rows.shape) != tuple(sample_shape):
+            raise ValueError(f"the dataloader selected {tuple(rows.shape)} rows for a batch of {tuple(sample_shape)}")
+        return rows.float()
+
+
+def _noise_layout(sources: Tensor) -> tuple[Tensor, Tensor]:
+    """One region: the scan's background as a whole. `(atlas, layout)` for `_render` with `k_max=1`."""
+    atlas = torch.where(sources, 0, -1)
+    return atlas, torch.zeros_like(atlas)
+
+
+def _voronoi_layout(atlas: Tensor, n_cells: Tensor, c_max: int, k_max: int) -> Tensor:
+    """`[N, 1, D, H, W]` long: Voronoi cells over the whole patch, each coloured by one of `atlas`'s regions.
+
+    Row `b` has `n_cells[b]` seeds uniform in the patch. Distances are weighted per axis
+    (log-uniform in `[1/_CELL_STRETCH, _CELL_STRETCH]`), so cells are elongated, and the cell
+    map is deformed by SynthSeg's diffeomorphic field, so the walls are not planes. Each
+    cell takes a region drawn in proportion to the region's source voxels, so a region the
+    EM left empty is never drawn. The nearest seed is a running minimum, one full-volume
+    pass per seed slot, so no `[V, S]` distance matrix is built.
+    """
+    n = atlas.shape[0]
+    d, h, w = atlas.shape[2:]
+    device = atlas.device
+    seeds = torch.rand(n, c_max, 3, device=device) * torch.tensor([d, h, w], device=device, dtype=torch.float32)
+    lo, hi = -math.log(_CELL_STRETCH), math.log(_CELL_STRETCH)
+    weight = torch.exp(lo + torch.rand(n, 3, device=device) * (hi - lo))
+    axes = [torch.arange(size, device=device, dtype=torch.float32) for size in (d, h, w)]
+    best = torch.full((n, 1, d, h, w), math.inf, device=device)
+    cell = torch.zeros((n, 1, d, h, w), dtype=torch.long, device=device)
+    live = n_cells.to(device).view(n, 1, 1, 1, 1)
+    for j in range(c_max):
+        dist = (
+            weight[:, 0].view(n, 1, 1, 1, 1) * (axes[0].view(1, 1, -1, 1, 1) - seeds[:, j, 0].view(n, 1, 1, 1, 1)) ** 2
+            + weight[:, 1].view(n, 1, 1, 1, 1) * (axes[1].view(1, 1, 1, -1, 1) - seeds[:, j, 1].view(n, 1, 1, 1, 1)) ** 2
+            + weight[:, 2].view(n, 1, 1, 1, 1) * (axes[2].view(1, 1, 1, 1, -1) - seeds[:, j, 2].view(n, 1, 1, 1, 1)) ** 2
+        )
+        closer = (dist < best) & (j < live)
+        best = torch.where(closer, dist, best)
+        cell = torch.where(closer, j, cell)
+    warped = _deform(cell)
+    cell = torch.where(warped >= 0, warped, cell)  # what the field pulled in from outside keeps its cell
+
+    flat = atlas.flatten(1)
+    counts = torch.zeros(n, k_max, device=device).scatter_add_(1, flat.clamp_min(0), (flat >= 0).float())
+    counts = torch.where(counts.sum(1, keepdim=True) > 0, counts, 1.0)
+    region_of_cell = torch.multinomial(counts, c_max, replacement=True)  # [N, c_max]
+    return region_of_cell.gather(1, cell.flatten(1)).view_as(cell)
+
+
+def _black_border(image: Tensor, padding: Tensor) -> Tensor:
+    """`[N, 1, D, H, W]` bool: the voxels at each row's black level, if the row has one.
+
+    The level is the most frequent intensity (in bins of `_BORDER_TOL`) among the
+    non-padding voxels of each channel. It counts as a border if it covers at least
+    `_BORDER_MIN_FRACTION` of them and lies at or below their median, in every channel. A
+    radius-1 opening then drops isolated voxels that happen to sit at that level inside the
+    anatomy. Clipped CT air is selected too: the rule cannot tell it from an MRI border.
+    """
+    n, c = image.shape[:2]
+    valid = ~padding.flatten(1)
+    n_valid = valid.sum(1)
+    on = valid.clone()
+    accept = torch.ones(n, dtype=torch.bool, device=image.device)
+    # Distinct keys above any intensity's, so padding never forms the mode.
+    pad_keys = torch.arange(valid.shape[1], device=image.device) + int(1e12)
+    for ch in range(c):
+        x = image[:, ch].flatten(1)
+        key = torch.where(valid, torch.round(x / _BORDER_TOL).long(), pad_keys)
+        level = key.mode(dim=1).values.float() * _BORDER_TOL
+        at_level = valid & ((x - level.unsqueeze(1)).abs() <= _BORDER_TOL)
+        median = x.masked_fill(~valid, math.nan).nanmedian(dim=1).values
+        accept &= (at_level.sum(1) >= _BORDER_MIN_FRACTION * n_valid) & (level <= median)
+        on &= at_level
+    on = (on & accept.unsqueeze(1)).view_as(padding)
+    # Erode with the padding counted as border, so a border meeting the padding keeps its edge.
+    core = ~_dilate(~(on | padding), 1)
+    return _dilate(core, 1) & on
+
+
+class FOVWindowGenerator3D(RandomGeneratorBase):
+    """Per row: the fill kind (index into the configured list), the EM region count, the Voronoi cell count, the border coin."""
+
+    def __init__(self, n_fills: int, regions: tuple[int, int], cells: tuple[int, int], border_p: float) -> None:
+        super().__init__()
+        self.n_fills = n_fills
+        self.regions = regions
+        self.cells = cells
+        self.border_p = border_p
+
+    def make_samplers(self, device: torch.device, dtype: torch.dtype) -> None:
+        self.unit = UniformDistribution(
+            torch.tensor(0.0, device=device, dtype=dtype), torch.tensor(1.0, device=device, dtype=dtype), validate_args=False
+        )
+
+    def forward(self, batch_shape: tuple[int, ...], same_on_batch: bool = False) -> dict[str, Tensor]:
+        n = batch_shape[0]
+
+        def integer(lo: int, hi: int) -> Tensor:
+            return (lo + _adapted_rsampling((n,), self.unit, same_on_batch) * (hi - lo + 1)).floor().clamp(max=float(hi)).long()
+
+        return {
+            "fill": integer(0, self.n_fills - 1),
+            "regions": integer(*self.regions),
+            "cells": integer(*self.cells),
+            "border": _adapted_rsampling((n,), self.unit, same_on_batch) < self.border_p,
+        }
+
+
+@register(
+    aug_id=AugId.FOV_WINDOW,
+    backend=Backend.GPU,
+    group=AugType.GEO,
+    smoke_kwargs={"fill": ["em", "noise", "voronoi"], "regions": (2, 4), "cells": (2, 6), "layers": 2, "border_p": 1.0},
+)
+class RandomFOVWindowGPU(ImageOnlyTransform):
+    """Fill what lies outside the case, in a window the dataloader placed partly outside it.
+
+    Two halves, one config entry. Before patching, `nnUNetTrainerDAExtGPU` swaps nnU-Net's
+    training loader for `smauglab.trainers.fov_window.FOVWindowDataLoader`, which, with
+    probability `p` per sample, lets nnU-Net pick the window in a case padded by `extend` of
+    the patch on every face no label comes near. The patch then holds real data wherever the
+    case has it, and nnU-Net's 0 padding where the window leaves the case. After patching,
+    this transform fills, on exactly the samples the loader moved:
+
+    * the padding: every channel exactly 0, which is what nnU-Net pads with and what
+      SpatialTransform writes outside its input;
+    * with probability `border_p`, the black border: the most frequent intensity, if it
+      covers at least 5% of the scan and lies at or below its median (`_black_border`). In
+      MRI that is everything outside the acquisition slab and the masked air around the
+      body; in CT it is the clipped air;
+    * plus the one-voxel interpolated edge of either,
+
+    but never a voxel within `margin` of a label: a label the case face or the border cuts
+    keeps a dark rim instead of meeting synthetic tissue. What is filled comes from one of
+    `fill`, drawn per sample when it is a list (repeat a kind to weight it):
+
+    * `"em"`: `RandomFOVExtensionGPU`'s fill without the shift. EM regions on the scan's
+      background (label 0, more than `margin` from a label, off the fill), a majority filter,
+      a diffeomorphic deform, `layers` warped copies seeded by the scan's own regions, then
+      each voxel drawn from its region's Gaussian with correlated texture and blurred;
+    * `"noise"`: one region, the scan background's mean and standard deviation, same texture
+      and blur;
+    * `"voronoi"`: 4 to 16 (`cells`) large, elongated, deformed Voronoi cells over the patch,
+      each rendered as one of the EM regions.
+
+    Everything outside the fill is the input, bit for bit, and the segmentation is never
+    changed: what is filled was background or padding. A sample without background to fit
+    on is left as it is.
+
+    Row selection comes from the loader (`set_selection`). Without it (a standalone render, a
+    test), the transform draws Bernoulli(`p`) per row and warns once, and no window has been
+    moved, so only the case's own padding and border are filled.
+
+    Args:
+        extend: how far nnU-Net may place the window outside the case, as a fraction of the
+            patch, one value or one per axis, each in [0, 1). A random window keeps at least
+            `(1 - extend)` of the patch inside the case along each axis.
+        fill: `"em"`, `"noise"`, `"voronoi"`, or a list of them to draw from per sample.
+        regions: `(min, max)` EM regions, for `"em"` and `"voronoi"`.
+        cells: `(min, max)` Voronoi cells.
+        margin: voxels around every label that are neither filled nor used as a source; also
+            how close a label must come to a case face for the loader to spare that face.
+        layers: warped copies of the region map composited by `"em"`.
+        border_p: probability that a selected sample's black border is filled too.
+        p: probability that a sample's window is moved and filled.
+        p_batch: must be 1; a batch-level coin would desynchronise the loader's selection.
+    """
+
+    def __init__(
+        self,
+        extend: float | Sequence[float] = 0.75,
+        fill: str | Sequence[str] = "em",
+        regions: Sequence[int] = (3, 10),
+        cells: Sequence[int] = (4, 16),
+        margin: int = 4,
+        layers: int = 6,
+        border_p: float = 0.0,
+        p: float = 0.5,
+        p_batch: float = 1.0,
+        keepdim: bool = True,
+    ) -> None:
+        super().__init__(p=p, p_batch=p_batch, same_on_batch=False, keepdim=keepdim)
+        extends = (float(extend),) * 3 if isinstance(extend, (int, float)) else tuple(float(e) for e in extend)
+        if len(extends) != 3 or not all(0.0 <= e < 1.0 for e in extends):
+            raise ValueError(f"extend must be one value or three, each in [0, 1). Got {extend!r}.")
+        fills = (fill,) if isinstance(fill, str) else tuple(fill)
+        if not fills or any(f not in FILL_KINDS for f in fills):
+            raise ValueError(f"fill must be one of {FILL_KINDS} or a non-empty list of them. Got {fill!r}.")
+        for name, value in (("regions", regions), ("cells", cells)):
+            if len(value) != 2 or not 1 <= int(value[0]) <= int(value[1]):
+                raise ValueError(f"{name} must be (min, max) with 1 <= min <= max. Got {value!r}.")
+        if int(margin) < 0 or int(layers) < 1:
+            raise ValueError(f"margin must be >= 0 and layers >= 1. Got margin={margin!r}, layers={layers!r}.")
+        if not 0.0 <= float(border_p) <= 1.0 or not 0.0 <= float(p) <= 1.0:
+            raise ValueError(f"border_p and p must lie in [0, 1]. Got border_p={border_p!r}, p={p!r}.")
+        if float(p_batch) != 1.0:
+            raise ValueError(f"p_batch must be 1: a batch-level coin would desynchronise the loader's selection. Got {p_batch!r}.")
+        self.extend = extends
+        self.fill = fills
+        self.regions = (int(regions[0]), int(regions[1]))
+        self.cells = (int(cells[0]), int(cells[1]))
+        self.margin = int(margin)
+        self.layers = int(layers)
+        self.border_p = float(border_p)
+        self._p_gen = _LoaderSelection(float(p))  # type: ignore[assignment]
+        self._param_generator = FOVWindowGenerator3D(len(fills), self.regions, self.cells, self.border_p)
+
+    @property  # type: ignore[override]
+    def same_on_batch(self) -> bool:
+        """Always False: the selection is the loader's, per sample. The setter ignores what a container writes."""
+        return False
+
+    @same_on_batch.setter
+    def same_on_batch(self, value: bool) -> None:
+        pass
+
+    @property
+    def fallbacks(self) -> int:
+        """Calls that had no selection from the loader and drew their own rows."""
+        return self._p_gen.fallbacks  # type: ignore[attr-defined]
+
+    def loader_settings(self) -> WindowSettings:
+        return WindowSettings(p=float(self.p), extend=self.extend, margin=self.margin)
+
+    def set_selection(self, rows: Tensor | Sequence[bool]) -> None:
+        """Hand the next call the rows the dataloader moved. Consumed by exactly one call."""
+        rows = torch.as_tensor(rows, dtype=torch.bool).flatten().cpu()
+        if (self.p == 1.0 and not bool(rows.all())) or (self.p == 0.0 and bool(rows.any())):
+            raise ValueError(f"the loader selected {rows.tolist()} at p={self.p}")
+        if self.p in (0.0, 1.0):
+            return  # kornia does not ask `_p_gen` at p 0 or 1, and the rows agree with it
+        if self._p_gen.pending is not None:  # type: ignore[attr-defined]
+            raise RuntimeError("the previous selection was never consumed: the transform did not run on that batch")
+        self._p_gen.pending = rows  # type: ignore[attr-defined]
+
+    @torch.no_grad()
+    def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
+        # fp32 throughout, as in `RandomFOVExtensionGPU`.
+        with torch.autocast(device_type=input.device.type, enabled=False):
+            image = input.float()
+            n = image.shape[0]
+            padding = (image == _NNUNET_PAD).all(dim=1, keepdim=True)
+            seg = segmentation_from(params)
+            labelled = torch.zeros_like(padding) if seg is None else _foreground(seg, dim=1).unsqueeze(1)
+            near = _dilate(labelled, self.margin)
+
+            border = torch.zeros_like(padding)
+            wants = params["border"].cpu().nonzero().flatten()
+            if wants.numel():
+                rows = wants.to(image.device)
+                border[rows] = _black_border(image[rows], padding[rows])
+
+            outside = _dilate(padding | border, _SEAM)
+            sources = ~(near | outside)
+            has_sources = sources.flatten(1).any(dim=1).view(n, 1, 1, 1, 1)
+            fill = outside & ~near & has_sources
+
+            k_max = self.regions[1]
+            kinds = [self.fill[k] for k in params["fill"].tolist()]
+            rendered = image.clone()
+            for kind in FILL_KINDS:
+                picked = [b for b, k in enumerate(kinds) if k == kind]
+                if not picked:
+                    continue
+                rows = torch.tensor(picked, device=image.device)
+                img, src, todo = image[rows], sources[rows], fill[rows]
+                if kind == "noise":
+                    atlas, layout = _noise_layout(src)
+                    rendered[rows] = _render(img, atlas, layout, 1)
+                    continue
+                n_regions = params["regions"][picked].to(image.device).long()
+                atlas = _em_atlas(img, src, n_regions, k_max)
+                if kind == "em":
+                    seed = torch.where(todo, -1, atlas)  # the scan keeps its own regions
+                    layout = _extend_regions(_deform(atlas), seed, todo, self.layers)
+                else:
+                    layout = _voronoi_layout(atlas, params["cells"][picked], self.cells[1], k_max)
+                rendered[rows] = _render(img, atlas, layout, k_max)
+            out = torch.where(fill, rendered, image)
+        return out.to(input.dtype)

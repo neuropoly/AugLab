@@ -102,7 +102,11 @@ def all_config_paths() -> list[Path]:
 def gpu_config_paths() -> list[Path]:
     """Configs that drive the GPU augmentation pipeline."""
     paths = [p for p in all_config_paths() if p.name.startswith("transform_params_gpu")]
-    for name in ("transform_params_one-sequence-to-segment-them-all.json", "transform_params_one-sequence-to-segment-them-all-fov.json"):
+    for name in (
+        "transform_params_one-sequence-to-segment-them-all.json",
+        "transform_params_one-sequence-to-segment-them-all-fov.json",
+        "transform_params_one-sequence-to-segment-them-all-fov-window.json",
+    ):
         extra = configs_dir() / name
         if extra.is_file():
             paths.append(extra)
